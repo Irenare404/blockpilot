@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+dist/
+build/
+coverage/
+
+# Local runtime data
+.env
+.env.*
+data/
+logs/
+*.log
+
+# Editor and OS
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
+
