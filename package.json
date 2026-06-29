@@ -1,0 +1,23 @@
+{
+  "name": "blockpilot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.9.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "check": "tsc -b --pretty false",
+    "clean": "git clean -fdX",
+    "dev:gateway": "pnpm --filter @blockpilot/core build && pnpm --filter @blockpilot/gateway dev",
+    "dev:bot": "pnpm --filter @blockpilot/core build && pnpm --filter @blockpilot/bot-worker dev"
+  },
+  "devDependencies": {
+    "@types/node": "^26.0.1",
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.22.4",
+    "typescript": "^6.0.3"
+  }
+}

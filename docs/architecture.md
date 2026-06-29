@@ -36,6 +36,20 @@ The gateway is the control plane for agents, plugins, and future UI surfaces.
 - Apply permissions and audit logging.
 - Provide the stable interface used by plugins and agents.
 
+Current gateway endpoints:
+
+- `GET /health`
+- `GET /bots`
+- `GET /bots/:botId/status`
+- `POST /bots/:botId/actions`
+- `WS /worker`
+- `WS /events`
+
+Current actions:
+
+- `chat`
+- `stop`
+
 ### Capability Runtime
 
 Capabilities may be built in or loaded as plugins. The agent should see a unified tool registry regardless of where a capability comes from.
@@ -43,4 +57,3 @@ Capabilities may be built in or loaded as plugins. The agent should see a unifie
 - Built-in tools cover core behavior.
 - Plugins register optional tools and event handlers.
 - The raw Minecraft client is not exposed to plugins by default.
-

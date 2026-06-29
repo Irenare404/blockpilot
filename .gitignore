@@ -6,10 +6,12 @@ node_modules/
 dist/
 build/
 coverage/
+*.tsbuildinfo
 
 # Local runtime data
 .env
 .env.*
+!.env.example
 data/
 logs/
 *.log
@@ -19,4 +21,3 @@ logs/
 .idea/
 Thumbs.db
 .DS_Store
-
