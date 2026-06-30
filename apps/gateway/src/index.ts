@@ -10,6 +10,7 @@ import {
   nowIso,
   safeJsonParse,
   type BotAction,
+  type BotCapability,
   type BotStatus,
   type GatewayCommandMessage,
   type WorkerResultMessage,
@@ -26,6 +27,7 @@ interface WorkerSession {
   botId: string;
   socket: WebSocket;
   status: BotStatus;
+  capabilities: BotCapability[];
   pending: Map<string, PendingCommand>;
 }
 
@@ -158,6 +160,22 @@ async function handleHttpRequest(request: IncomingMessage, response: ServerRespo
   }
 
   const actionMatch = /^\/bots\/([^/]+)\/actions$/.exec(url.pathname);
+  if (request.method === "GET" && actionMatch?.[1]) {
+    const botId = decodeURIComponent(actionMatch[1]);
+    const session = workerSessions.get(botId);
+
+    if (!session) {
+      sendJson(response, 404, { error: `Unknown bot '${botId}'` });
+      return;
+    }
+
+    sendJson(response, 200, {
+      botId,
+      actions: session.capabilities,
+    });
+    return;
+  }
+
   if (request.method === "POST" && actionMatch?.[1]) {
     const botId = decodeURIComponent(actionMatch[1]);
     const body = await readJsonBody(request);
@@ -204,6 +222,7 @@ function handleWorkerMessage(socket: WebSocket, data: RawData): void {
       botId: parsed.botId,
       socket,
       pending: new Map(),
+      capabilities: parsed.capabilities ?? [],
       status: {
         botId: parsed.botId,
         state: "online",

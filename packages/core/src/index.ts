@@ -50,6 +50,12 @@ export interface FollowPlayerAction {
 
 export type BotAction = ChatAction | StopAction | FollowPlayerAction;
 
+export interface BotCapability {
+  name: BotAction["name"];
+  description: string;
+  source: "builtin" | "plugin";
+}
+
 export interface ActionResult {
   ok: boolean;
   message?: string;
@@ -70,6 +76,7 @@ export interface WorkerHelloMessage {
   protocolVersion: string;
   botId: string;
   workerName?: string;
+  capabilities?: BotCapability[];
 }
 
 export interface WorkerStatusMessage {

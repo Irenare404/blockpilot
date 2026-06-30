@@ -41,6 +41,7 @@ Current gateway endpoints:
 - `GET /health`
 - `GET /bots`
 - `GET /bots/:botId/status`
+- `GET /bots/:botId/actions`
 - `POST /bots/:botId/actions`
 - `WS /worker`
 - `WS /events`
@@ -55,6 +56,8 @@ Current built-in chat intents:
 
 - follow the speaking player
 - stop current movement
+
+The worker now keeps built-in actions behind an internal registry and reports its capabilities to the gateway during registration. The gateway exposes those capabilities through `GET /bots/:botId/actions`; later plugin and agent tooling should attach to this registry shape instead of adding one-off action branches.
 
 ### Capability Runtime
 

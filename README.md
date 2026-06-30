@@ -79,6 +79,12 @@ List known bots:
 curl http://127.0.0.1:8787/bots
 ```
 
+List actions exposed by a bot:
+
+```bash
+curl http://127.0.0.1:8787/bots/local-bot/actions
+```
+
 Send a chat message through the bot:
 
 ```bash
@@ -109,6 +115,10 @@ If your bot ID is `BlockPilot`, use these from `cmd.exe`:
 
 ```bat
 curl http://127.0.0.1:8787/bots
+```
+
+```bat
+curl http://127.0.0.1:8787/bots/BlockPilot/actions
 ```
 
 ```bat

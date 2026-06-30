@@ -8,6 +8,8 @@ import {
   safeJsonParse,
   type ActionResult,
   type BlockPilotEvent,
+  type BotAction,
+  type BotCapability,
   type BotConnectionState,
   type BotStatus,
   type GatewayToWorkerMessage,
@@ -33,6 +35,17 @@ type PathfinderBot = Bot & {
   pathfinder: PathfinderController;
 };
 
+type WorkerActionName = BotAction["name"];
+type ActionHandler<TName extends WorkerActionName> = (
+  activeBot: Bot,
+  action: Extract<BotAction, { name: TName }>,
+) => Promise<ActionResult> | ActionResult;
+
+interface RegisteredAction<TName extends WorkerActionName = WorkerActionName> {
+  capability: BotCapability & { name: TName };
+  run: (activeBot: Bot, action: BotAction) => Promise<ActionResult> | ActionResult;
+}
+
 type ChatIntent =
   | {
       name: "follow_player";
@@ -54,6 +67,8 @@ interface WorkerConfig {
 }
 
 const config = readConfig();
+const actionRegistry = new Map<WorkerActionName, RegisteredAction>();
+registerBuiltInActions();
 
 let bot: Bot | undefined;
 let gateway: WebSocket | undefined;
@@ -100,6 +115,7 @@ function connectGateway(): void {
       protocolVersion: BLOCKPILOT_PROTOCOL_VERSION,
       botId: config.botId,
       workerName: "blockpilot-bot-worker",
+      capabilities: getCapabilities(),
     });
     publishStatus();
   });
@@ -233,27 +249,70 @@ async function runCommand(message: Extract<GatewayToWorkerMessage, { type: "gate
   }
 }
 
-async function executeAction(action: Extract<GatewayToWorkerMessage, { type: "gateway.command" }>["action"]): Promise<ActionResult> {
+function registerBuiltInActions(): void {
+  registerAction(
+    {
+      name: "chat",
+      description: "Send a chat message as the bot.",
+      source: "builtin",
+    },
+    (activeBot, action) => {
+      activeBot.chat(action.args.message);
+      return {
+        ok: true,
+        message: "Message sent",
+      };
+    },
+  );
+
+  registerAction(
+    {
+      name: "follow_player",
+      description: "Follow a visible player with pathfinding.",
+      source: "builtin",
+    },
+    (activeBot, action) => followPlayer(activeBot, action.args.playerName, action.args.distance),
+  );
+
+  registerAction(
+    {
+      name: "stop",
+      description: "Stop current movement and clear active controls.",
+      source: "builtin",
+    },
+    (activeBot, action) => {
+      stopCurrentControls(activeBot, action.args?.reason);
+      return {
+        ok: true,
+        message: "Current controls stopped",
+      };
+    },
+  );
+}
+
+function registerAction<TName extends WorkerActionName>(
+  capability: BotCapability & { name: TName },
+  run: ActionHandler<TName>,
+): void {
+  actionRegistry.set(capability.name, {
+    capability,
+    run: (activeBot, action) => run(activeBot, action as Extract<BotAction, { name: TName }>),
+  });
+}
+
+function getCapabilities(): BotCapability[] {
+  return [...actionRegistry.values()].map((registered) => registered.capability);
+}
+
+async function executeAction(action: BotAction): Promise<ActionResult> {
   const activeBot = requireBot();
+  const registered = actionRegistry.get(action.name);
 
-  if (action.name === "chat") {
-    activeBot.chat(action.args.message);
-    return {
-      ok: true,
-      message: "Message sent",
-    };
+  if (!registered) {
+    throw new Error(`Unknown action '${action.name}'`);
   }
 
-  if (action.name === "follow_player") {
-    return followPlayer(activeBot, action.args.playerName, action.args.distance);
-  }
-
-  stopCurrentControls(activeBot, action.args?.reason);
-
-  return {
-    ok: true,
-    message: "Current controls stopped",
-  };
+  return registered.run(activeBot, action);
 }
 
 async function followPlayer(activeBot: Bot, playerName: string, distance = 2): Promise<ActionResult> {
@@ -289,24 +348,33 @@ async function handleChatIntent(username: string, message: string): Promise<void
     return;
   }
 
-  const activeBot = requireBot();
-
   try {
     if (intent.name === "follow_player") {
-      const result = await followPlayer(activeBot, intent.playerName, intent.distance);
-      activeBot.chat(result.message ?? `Following ${intent.playerName}`);
+      const result = await executeAction({
+        name: "follow_player",
+        args: {
+          playerName: intent.playerName,
+          distance: intent.distance,
+        },
+      });
+      bot?.chat(result.message ?? `Following ${intent.playerName}`);
       return;
     }
 
-    stopCurrentControls(activeBot, `Chat stop command from '${username}'`);
-    activeBot.chat("Stopped.");
+    await executeAction({
+      name: "stop",
+      args: {
+        reason: `Chat stop command from '${username}'`,
+      },
+    });
+    bot?.chat("Stopped.");
   } catch (error) {
     const errorMessage = asErrorMessage(error);
     publishEvent("intent.error", errorMessage, {
       username,
       message,
     });
-    activeBot.chat(errorMessage);
+    bot?.chat(errorMessage);
   }
 }
 
