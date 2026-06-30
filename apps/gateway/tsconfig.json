@@ -8,8 +8,10 @@
   "references": [
     {
       "path": "../../packages/core"
+    },
+    {
+      "path": "../../packages/node-env"
     }
   ],
   "include": ["src/**/*.ts"]
 }
-

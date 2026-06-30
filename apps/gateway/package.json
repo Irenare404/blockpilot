@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "@blockpilot/core": "workspace:*",
+    "@blockpilot/node-env": "workspace:*",
     "ws": "^8.21.0"
   }
 }
-

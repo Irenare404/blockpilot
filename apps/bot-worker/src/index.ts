@@ -20,6 +20,7 @@ import {
   type WorkerToGatewayMessage,
   type WorldSnapshot,
 } from "@blockpilot/core";
+import { loadDotEnv } from "@blockpilot/node-env";
 import { createBot, type Bot, type BotOptions } from "mineflayer";
 import pathfinderPackage from "mineflayer-pathfinder";
 import { WebSocket, type RawData } from "ws";
@@ -27,6 +28,8 @@ import { PluginRuntime } from "./plugin-runtime.js";
 import { builtInPlugins } from "./plugins/index.js";
 
 const { goals, Movements, pathfinder } = pathfinderPackage;
+
+loadDotEnv();
 
 type AuthMode = NonNullable<BotOptions["auth"]>;
 type PathfinderGoal = InstanceType<(typeof goals)["GoalFollow"]> | InstanceType<(typeof goals)["GoalNear"]>;

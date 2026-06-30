@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { URL } from "node:url";
+import { loadDotEnv } from "@blockpilot/node-env";
 import {
   asErrorMessage,
   BLOCKPILOT_PROTOCOL_VERSION,
@@ -18,6 +19,8 @@ import {
   type WorkerResultMessage,
 } from "@blockpilot/core";
 import { WebSocket, WebSocketServer, type RawData } from "ws";
+
+loadDotEnv();
 
 interface PendingCommand {
   resolve: (message: WorkerResultMessage) => void;

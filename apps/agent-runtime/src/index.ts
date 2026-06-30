@@ -1,4 +1,5 @@
 import { asErrorMessage } from "@blockpilot/core";
+import { loadDotEnv } from "@blockpilot/node-env";
 import { AutonomyLoop } from "./autonomy.js";
 import { ChatAgent } from "./chat-agent.js";
 import { GatewayClient } from "./gateway-client.js";
@@ -9,6 +10,8 @@ import { RulePlanner } from "./rule-planner.js";
 import { SafetyReflex } from "./safety-reflex.js";
 
 type PlannerKind = "llm" | "rule";
+
+loadDotEnv();
 
 interface AgentConfig {
   botId: string;

@@ -45,6 +45,8 @@ corepack pnpm install
 corepack pnpm build
 ```
 
+Copy `.env.example` to `.env` and edit the Minecraft and LLM values. Gateway, bot worker, and agent runtime automatically load the nearest `.env` file from the repository tree. Existing shell environment variables win over `.env` values.
+
 ## Run
 
 Start the gateway:
@@ -56,19 +58,12 @@ corepack pnpm dev:gateway
 In another shell, start the worker:
 
 ```powershell
-$env:MC_HOST="127.0.0.1"
-$env:MC_PORT="25565"
-$env:MC_USERNAME="BlockPilot"
-$env:MC_AUTH="offline"
 corepack pnpm dev:bot
 ```
 
 In a third shell, start the agent runtime:
 
 ```powershell
-$env:BLOCKPILOT_BOT_ID="BlockPilot"
-$env:BLOCKPILOT_GATEWAY_HTTP="http://127.0.0.1:8787"
-$env:BLOCKPILOT_AGENT_PREFIX="!bp"
 corepack pnpm dev:agent
 ```
 
