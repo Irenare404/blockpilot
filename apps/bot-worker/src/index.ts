@@ -15,9 +15,21 @@ import {
   type WorkerToGatewayMessage,
 } from "@blockpilot/core";
 import { createBot, type Bot, type BotOptions } from "mineflayer";
+import { goals, Movements, pathfinder } from "mineflayer-pathfinder";
 import { WebSocket, type RawData } from "ws";
 
 type AuthMode = NonNullable<BotOptions["auth"]>;
+type Goal = InstanceType<(typeof goals)["GoalFollow"]>;
+
+interface PathfinderController {
+  setMovements: (movements: Movements) => void;
+  setGoal: (goal: Goal | null, dynamic?: boolean) => void;
+  stop: () => void;
+}
+
+type PathfinderBot = Bot & {
+  pathfinder: PathfinderController;
+};
 
 interface WorkerConfig {
   botId: string;
@@ -111,11 +123,13 @@ function connectMinecraft(): void {
   }
 
   bot = createBot(options);
+  bot.loadPlugin(pathfinder);
 
   bot.once("spawn", () => {
     connectionState = "online";
     connectedAt = connectedAt ?? nowIso();
     lastError = undefined;
+    configurePathfinder(requirePathfinderBot(bot));
     console.log("[bot-worker] spawned in Minecraft server");
     publishEvent("bot.spawn", "Bot spawned in Minecraft server");
     publishStatus();
@@ -216,19 +230,65 @@ async function executeAction(action: Extract<GatewayToWorkerMessage, { type: "ga
     };
   }
 
-  activeBot.clearControlStates();
+  if (action.name === "follow_player") {
+    return followPlayer(activeBot, action.args.playerName, action.args.distance);
+  }
 
-  const maybePathfinder = activeBot as Bot & {
-    pathfinder?: {
-      stop: () => void;
-    };
-  };
-  maybePathfinder.pathfinder?.stop();
+  stopCurrentControls(activeBot, action.args?.reason);
 
   return {
     ok: true,
     message: "Current controls stopped",
   };
+}
+
+async function followPlayer(activeBot: Bot, playerName: string, distance = 2): Promise<ActionResult> {
+  const target = activeBot.players[playerName]?.entity;
+  if (!target) {
+    throw new Error(`Player '${playerName}' is not visible to the bot`);
+  }
+
+  const followDistance = clamp(distance, 1, 16);
+  const pathfinderBot = requirePathfinderBot(activeBot);
+  stopCurrentControls(activeBot, `Starting follow_player for '${playerName}'`);
+
+  pathfinderBot.pathfinder.setGoal(new goals.GoalFollow(target, followDistance), true);
+
+  publishEvent("action.follow_player", `Following player '${playerName}'`, {
+    playerName,
+    distance: followDistance,
+  });
+
+  return {
+    ok: true,
+    message: `Following player '${playerName}'`,
+    data: {
+      playerName,
+      distance: followDistance,
+    },
+  };
+}
+
+function configurePathfinder(activeBot: PathfinderBot): void {
+  activeBot.pathfinder.setMovements(new Movements(activeBot));
+}
+
+function stopCurrentControls(activeBot: Bot, reason?: string): void {
+  activeBot.clearControlStates();
+
+  const maybePathfinder = activeBot as Bot & {
+    pathfinder?: {
+      setGoal?: (goal: null) => void;
+      stop?: () => void;
+    };
+  };
+
+  maybePathfinder.pathfinder?.stop?.();
+  maybePathfinder.pathfinder?.setGoal?.(null);
+
+  if (reason) {
+    publishEvent("action.stop", reason);
+  }
 }
 
 function requireBot(): Bot {
@@ -241,6 +301,22 @@ function requireBot(): Bot {
   }
 
   return bot;
+}
+
+function requirePathfinderBot(activeBot: Bot | undefined): PathfinderBot {
+  if (!activeBot) {
+    throw new Error("Minecraft bot has not been created");
+  }
+
+  const maybePathfinderBot = activeBot as Bot & {
+    pathfinder?: PathfinderController;
+  };
+
+  if (!maybePathfinderBot.pathfinder) {
+    throw new Error("Pathfinder plugin is not available");
+  }
+
+  return maybePathfinderBot as PathfinderBot;
 }
 
 function publishStatus(): void {
@@ -376,6 +452,10 @@ function round(value: number): number {
   return Math.round(value * 100) / 100;
 }
 
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
+}
+
 function shutdown(signal: string): void {
   shuttingDown = true;
   console.log(`[bot-worker] shutting down after ${signal}`);
@@ -392,4 +472,3 @@ function shutdown(signal: string): void {
     process.exit(0);
   }, 500).unref();
 }
-

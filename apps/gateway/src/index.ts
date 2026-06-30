@@ -165,7 +165,8 @@ async function handleHttpRequest(request: IncomingMessage, response: ServerRespo
 
     if (!action) {
       sendJson(response, 400, {
-        error: "Invalid action. Use {\"name\":\"chat\",\"args\":{\"message\":\"hello\"}} or {\"name\":\"stop\"}.",
+        error:
+          "Invalid action. Use {\"name\":\"chat\",\"args\":{\"message\":\"hello\"}}, {\"name\":\"follow_player\",\"args\":{\"playerName\":\"Steve\"}}, or {\"name\":\"stop\"}.",
       });
       return;
     }
@@ -328,6 +329,26 @@ function parseActionBody(body: unknown): BotAction | undefined {
     return {
       name: "stop",
     };
+  }
+
+  if (
+    name === "follow_player" &&
+    typeof body.playerName === "string" &&
+    body.playerName.trim().length > 0
+  ) {
+    const distance = typeof body.distance === "number" && body.distance > 0 ? body.distance : undefined;
+    const action: BotAction = {
+      name: "follow_player",
+      args: {
+        playerName: body.playerName,
+      },
+    };
+
+    if (distance !== undefined) {
+      action.args.distance = distance;
+    }
+
+    return action;
   }
 
   return undefined;

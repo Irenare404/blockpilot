@@ -40,7 +40,15 @@ export interface StopAction {
   };
 }
 
-export type BotAction = ChatAction | StopAction;
+export interface FollowPlayerAction {
+  name: "follow_player";
+  args: {
+    playerName: string;
+    distance?: number;
+  };
+}
+
+export type BotAction = ChatAction | StopAction | FollowPlayerAction;
 
 export interface ActionResult {
   ok: boolean;
@@ -163,10 +171,17 @@ export function isBotAction(value: unknown): value is BotAction {
     return value.args === undefined || isRecord(value.args);
   }
 
+  if (value.name === "follow_player") {
+    if (!isRecord(value.args) || typeof value.args.playerName !== "string" || value.args.playerName.trim().length === 0) {
+      return false;
+    }
+
+    return value.args.distance === undefined || (typeof value.args.distance === "number" && value.args.distance > 0);
+  }
+
   return false;
 }
 
 export function asErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
-

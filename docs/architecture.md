@@ -48,6 +48,7 @@ Current gateway endpoints:
 Current actions:
 
 - `chat`
+- `follow_player`
 - `stop`
 
 ### Capability Runtime

@@ -25,7 +25,7 @@ It supports:
 - A bot worker that joins a Java server through Mineflayer.
 - Worker registration through WebSocket.
 - Event streaming for bot status and Minecraft chat events.
-- Two controlled actions: `chat` and `stop`.
+- Three controlled actions: `chat`, `follow_player`, and `stop`.
 
 ## Direction
 
@@ -86,6 +86,14 @@ curl -X POST http://127.0.0.1:8787/bots/local-bot/actions \
   -d "{\"name\":\"chat\",\"args\":{\"message\":\"Hello from BlockPilot\"}}"
 ```
 
+Follow a visible player:
+
+```bash
+curl -X POST http://127.0.0.1:8787/bots/local-bot/actions \
+  -H "content-type: application/json" \
+  -d "{\"name\":\"follow_player\",\"args\":{\"playerName\":\"Steve\",\"distance\":2}}"
+```
+
 Stop the current bot controls:
 
 ```bash
@@ -94,11 +102,38 @@ curl -X POST http://127.0.0.1:8787/bots/local-bot/actions \
   -d "{\"name\":\"stop\"}"
 ```
 
+### Windows cmd Examples
+
+If your bot ID is `BlockPilot`, use these from `cmd.exe`:
+
+```bat
+curl http://127.0.0.1:8787/bots
+```
+
+```bat
+curl -X POST http://127.0.0.1:8787/bots/BlockPilot/actions ^
+  -H "content-type: application/json" ^
+  -d "{\"name\":\"chat\",\"args\":{\"message\":\"Hello from BlockPilot\"}}"
+```
+
+```bat
+curl -X POST http://127.0.0.1:8787/bots/BlockPilot/actions ^
+  -H "content-type: application/json" ^
+  -d "{\"name\":\"follow_player\",\"args\":{\"playerName\":\"YourPlayerName\",\"distance\":2}}"
+```
+
+```bat
+curl -X POST http://127.0.0.1:8787/bots/BlockPilot/actions ^
+  -H "content-type: application/json" ^
+  -d "{\"name\":\"stop\"}"
+```
+
+`follow_player` requires the target player to be visible to the bot.
+
 ## First Milestone
 
 1. Start a bot worker with Mineflayer.
 2. Connect the worker to a local gateway.
-3. Expose basic actions: chat and stop task.
-4. Add follow-player as the first movement action.
-5. Add a small intent layer so player chat can trigger actions.
-6. Keep the plugin API narrow but ready for growth.
+3. Expose basic actions: chat, follow player, and stop task.
+4. Add a small intent layer so player chat can trigger actions.
+5. Keep the plugin API narrow but ready for growth.
