@@ -1,7 +1,9 @@
 import { asErrorMessage } from "@blockpilot/core";
+import { AutonomyLoop } from "./autonomy.js";
 import { ChatAgent } from "./chat-agent.js";
 import { GatewayClient } from "./gateway-client.js";
 import { LlmPlanner } from "./llm-planner.js";
+import { createDefaultMemoryPath, MemoryStore, readAutonomyMode, type AutonomyMode } from "./memory-store.js";
 import type { AgentPlanner } from "./planner.js";
 import { RulePlanner } from "./rule-planner.js";
 import { SafetyReflex } from "./safety-reflex.js";
@@ -17,6 +19,13 @@ interface AgentConfig {
   aliases: string[];
   allowedActionNames: string[];
   responseDedupMs: number;
+  memoryFilePath: string;
+  autonomy: {
+    enabled: boolean;
+    mode: AutonomyMode;
+    intervalMs: number;
+    chatEnabled: boolean;
+  };
   safetyReflex: {
     enabled: boolean;
     cooldownMs: number;
@@ -35,11 +44,20 @@ interface AgentConfig {
 const config = readConfig();
 const client = new GatewayClient(config.gatewayHttpUrl, config.botId);
 const planner = createPlanner(config);
+const memory = new MemoryStore(config.memoryFilePath, config.botId, config.autonomy.mode);
+await memory.load();
 const safety = new SafetyReflex(client, {
   enabled: config.safetyReflex.enabled,
   cooldownMs: config.safetyReflex.cooldownMs,
   noticeEnabled: config.safetyReflex.noticeEnabled,
   noticeCooldownMs: config.safetyReflex.noticeCooldownMs,
+  allowedActionNames: config.allowedActionNames,
+});
+const autonomy = new AutonomyLoop(client, memory, {
+  enabled: config.autonomy.enabled,
+  mode: config.autonomy.mode,
+  intervalMs: config.autonomy.intervalMs,
+  chatEnabled: config.autonomy.chatEnabled,
   allowedActionNames: config.allowedActionNames,
 });
 const agent = new ChatAgent(client, planner, {
@@ -48,7 +66,9 @@ const agent = new ChatAgent(client, planner, {
   aliases: config.aliases,
   allowedActionNames: config.allowedActionNames,
   responseDedupMs: config.responseDedupMs,
+  memory,
   safety,
+  autonomy,
 });
 
 let shuttingDown = false;
@@ -68,6 +88,10 @@ console.log(`[agent-runtime] command prefix: ${config.commandPrefix}`);
 console.log(`[agent-runtime] aliases: ${config.aliases.join(", ") || "none"}`);
 console.log(`[agent-runtime] allowed actions: ${config.allowedActionNames.join(", ")}`);
 console.log(`[agent-runtime] safety reflex: ${config.safetyReflex.enabled ? "enabled" : "disabled"}`);
+console.log(`[agent-runtime] memory: ${config.memoryFilePath}`);
+console.log(
+  `[agent-runtime] autonomy: ${config.autonomy.enabled ? "enabled" : "disabled"} (${config.autonomy.mode}, interval ${config.autonomy.intervalMs}ms)`,
+);
 
 while (!shuttingDown) {
   try {
@@ -95,8 +119,10 @@ function createPlanner(config: AgentConfig): AgentPlanner {
 
 function readConfig(): AgentConfig {
   const plannerKind = readPlannerKind(process.env.BLOCKPILOT_AGENT_PLANNER);
+  const botId = readNonEmptyString(process.env.BLOCKPILOT_BOT_ID, "BlockPilot");
+  const autonomyMode = readAutonomyMode(process.env.BLOCKPILOT_AUTONOMY_MODE, "companion");
   const config: AgentConfig = {
-    botId: readNonEmptyString(process.env.BLOCKPILOT_BOT_ID, "BlockPilot"),
+    botId,
     commandPrefix: readNonEmptyString(process.env.BLOCKPILOT_AGENT_PREFIX, "!bp"),
     gatewayHttpUrl: readNonEmptyString(process.env.BLOCKPILOT_GATEWAY_HTTP, "http://127.0.0.1:8787"),
     tickIntervalMs: readInteger(process.env.BLOCKPILOT_AGENT_TICK_MS, 2_000),
@@ -104,9 +130,16 @@ function readConfig(): AgentConfig {
     aliases: readCsv(process.env.BLOCKPILOT_AGENT_ALIASES),
     allowedActionNames: readCsv(
       process.env.BLOCKPILOT_AGENT_ALLOWED_ACTIONS,
-      "chat,follow_player,stop,report_position,world_snapshot,eat_food,retreat_from_threat",
+      "chat,follow_player,go_to_position,stop,report_position,world_snapshot,eat_food,retreat_from_threat",
     ),
     responseDedupMs: readInteger(process.env.BLOCKPILOT_RESPONSE_DEDUP_MS, 30_000),
+    memoryFilePath: readNonEmptyString(process.env.BLOCKPILOT_MEMORY_FILE, createDefaultMemoryPath(botId)),
+    autonomy: {
+      enabled: readBoolean(process.env.BLOCKPILOT_AUTONOMY, false),
+      mode: autonomyMode,
+      intervalMs: readInteger(process.env.BLOCKPILOT_AUTONOMY_INTERVAL_MS, 120_000),
+      chatEnabled: readBoolean(process.env.BLOCKPILOT_AUTONOMY_CHAT, true),
+    },
     safetyReflex: {
       enabled: readBoolean(process.env.BLOCKPILOT_SAFETY_REFLEX, true),
       cooldownMs: readInteger(process.env.BLOCKPILOT_SAFETY_COOLDOWN_MS, 5_000),

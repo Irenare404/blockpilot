@@ -95,6 +95,47 @@ export const coreActionsPlugin: WorkerPlugin = {
 
     ctx.actions.register(
       {
+        name: "go_to_position",
+        description: "Move toward a world coordinate with pathfinding.",
+        source: "builtin",
+        parameters: {
+          type: "object",
+          properties: {
+            x: {
+              type: "number",
+              description: "Target x coordinate.",
+            },
+            y: {
+              type: "number",
+              description: "Target y coordinate.",
+            },
+            z: {
+              type: "number",
+              description: "Target z coordinate.",
+            },
+            range: {
+              type: "number",
+              description: "Acceptable arrival range in blocks.",
+              default: 1,
+              minimum: 0,
+              maximum: 8,
+            },
+          },
+          required: ["x", "y", "z"],
+          additionalProperties: false,
+        },
+      },
+      (action) => {
+        const x = requireNumberArg(action, "x");
+        const y = requireNumberArg(action, "y");
+        const z = requireNumberArg(action, "z");
+        const range = getOptionalNumberArg(action, "range");
+        return ctx.minecraft.goToPosition(x, y, z, range);
+      },
+    );
+
+    ctx.actions.register(
+      {
         name: "stop",
         description: "Stop current movement and clear active controls.",
         source: "builtin",
@@ -246,6 +287,15 @@ export const coreActionsPlugin: WorkerPlugin = {
 function foodRank(name: string): number {
   const index = FOOD_ITEM_NAMES.indexOf(name);
   return index === -1 ? FOOD_ITEM_NAMES.length : index;
+}
+
+function requireNumberArg(action: Parameters<typeof getArgs>[0], key: string): number {
+  const value = getArgs(action)[key];
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error(`Action '${action.name}' requires number argument '${key}'`);
+  }
+
+  return value;
 }
 
 function clamp(value: number, min: number, max: number): number {

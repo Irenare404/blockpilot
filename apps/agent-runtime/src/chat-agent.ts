@@ -1,9 +1,14 @@
 import type { BotCapability, ChatMessageSnapshot, WorldSnapshot } from "@blockpilot/core";
 import type { GatewayClient } from "./gateway-client.js";
-import type { AgentPlan, AgentPlanner } from "./planner.js";
+import type { AgentMemorySnapshot, MemoryStore } from "./memory-store.js";
+import type { AgentPlan, AgentPlanner, PlannerContext } from "./planner.js";
 
 export interface SafetyHandler {
   handle(world: WorldSnapshot): Promise<boolean>;
+}
+
+export interface AutonomyHandler {
+  handle(world: WorldSnapshot, memory: AgentMemorySnapshot): Promise<boolean>;
 }
 
 export interface ChatAgentConfig {
@@ -12,7 +17,9 @@ export interface ChatAgentConfig {
   aliases: string[];
   allowedActionNames: string[];
   responseDedupMs: number;
+  memory?: MemoryStore;
   safety?: SafetyHandler;
+  autonomy?: AutonomyHandler;
 }
 
 export class ChatAgent {
@@ -33,6 +40,10 @@ export class ChatAgent {
     const world = await this.client.getWorld();
     const botUsername = world.status.username ?? this.config.botId;
     const botNames = createBotNames(this.config.botId, botUsername, this.config.aliases);
+    const memory = this.config.memory;
+
+    await memory?.observeWorld(world);
+    const memorySnapshot = memory?.getSnapshot();
 
     if (await this.config.safety?.handle(world)) {
       return;
@@ -40,10 +51,13 @@ export class ChatAgent {
 
     const nextChat = this.takeLatestUnhandledChat(world.recentChat, botNames);
     if (!nextChat) {
+      if (memorySnapshot) {
+        await this.config.autonomy?.handle(world, memorySnapshot);
+      }
       return;
     }
 
-    const plan = await this.planner.plan({
+    const context: PlannerContext = {
       botId: this.config.botId,
       botUsername,
       botNames,
@@ -51,7 +65,12 @@ export class ChatAgent {
       allowedActionNames: this.config.allowedActionNames,
       chat: nextChat,
       world,
-    });
+    };
+    if (memorySnapshot) {
+      context.memory = memorySnapshot;
+    }
+
+    const plan = await this.planner.plan(context);
 
     if (!plan.addressedToBot) {
       return;
@@ -75,6 +94,16 @@ export class ChatAgent {
 
         this.rememberReply(step.message);
         await this.client.chat(step.message);
+        continue;
+      }
+
+      if (step.type === "memory") {
+        if (step.operation === "set_home") {
+          const saved = await this.config.memory?.setHomeFromWorld(world, step.notes);
+          if (!saved) {
+            console.warn("[agent-runtime] skipped set_home because position or memory was unavailable");
+          }
+        }
         continue;
       }
 

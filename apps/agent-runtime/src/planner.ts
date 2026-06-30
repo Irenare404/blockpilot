@@ -1,4 +1,5 @@
 import type { BotAction, ChatMessageSnapshot, WorldSnapshot } from "@blockpilot/core";
+import type { AgentMemorySnapshot } from "./memory-store.js";
 
 export interface PlannerContext {
   botId: string;
@@ -8,6 +9,7 @@ export interface PlannerContext {
   allowedActionNames: string[];
   chat: ChatMessageSnapshot;
   world: WorldSnapshot;
+  memory?: AgentMemorySnapshot;
 }
 
 export type AgentPlanStep =
@@ -18,6 +20,11 @@ export type AgentPlanStep =
   | {
       type: "action";
       action: BotAction;
+    }
+  | {
+      type: "memory";
+      operation: "set_home";
+      notes?: string;
     };
 
 export interface AgentPlan {

@@ -53,7 +53,17 @@ export interface FollowPlayerAction {
   };
 }
 
-export type BuiltInBotAction = ChatAction | StopAction | FollowPlayerAction;
+export interface GoToPositionAction {
+  name: "go_to_position";
+  args: {
+    x: number;
+    y: number;
+    z: number;
+    range?: number;
+  };
+}
+
+export type BuiltInBotAction = ChatAction | StopAction | FollowPlayerAction | GoToPositionAction;
 
 export interface BotCapabilityParameterSchema {
   type: "string" | "number" | "boolean";

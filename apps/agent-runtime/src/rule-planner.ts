@@ -7,7 +7,7 @@ type AgentCommand =
       chat: ChatMessageSnapshot;
     }
   | {
-      name: "help" | "status" | "stop" | "where" | "world";
+      name: "go_home" | "help" | "home" | "memory" | "set_home" | "status" | "stop" | "where" | "world";
       chat: ChatMessageSnapshot;
     };
 
@@ -22,6 +22,17 @@ const WHERE_ALIASES = new Set([
   "\u4F60\u5728\u54EA",
 ]);
 const WORLD_ALIASES = new Set(["world", "\u9644\u8FD1", "\u73A9\u5BB6"]);
+const HOME_ALIASES = new Set(["home", "base", "\u5BB6", "\u57FA\u5730"]);
+const MEMORY_ALIASES = new Set(["memory", "mem", "\u8BB0\u5FC6"]);
+const SET_HOME_ALIASES = new Set([
+  "sethome",
+  "set home",
+  "remember home",
+  "\u8BBE\u5BB6",
+  "\u8BBE\u7F6E\u5BB6",
+  "\u8BB0\u4F4F\u8FD9\u91CC\u662F\u5BB6",
+]);
+const GO_HOME_ALIASES = new Set(["go home", "return home", "back home", "\u56DE\u5BB6", "\u56DE\u57FA\u5730"]);
 const FOLLOW_ALIASES = new Set([
   "follow",
   "follow me",
@@ -38,7 +49,7 @@ export class RulePlanner implements AgentPlanner {
       return ignorePlan("message did not use the command prefix");
     }
 
-    return executeCommand(command, context.world, context.commandPrefix);
+    return executeCommand(command, context);
   }
 }
 
@@ -73,6 +84,22 @@ function parseCommand(chat: ChatMessageSnapshot, commandPrefix: string): AgentCo
     return { name: "world", chat };
   }
 
+  if (HOME_ALIASES.has(command)) {
+    return { name: "home", chat };
+  }
+
+  if (MEMORY_ALIASES.has(command)) {
+    return { name: "memory", chat };
+  }
+
+  if (SET_HOME_ALIASES.has(command)) {
+    return { name: "set_home", chat };
+  }
+
+  if (GO_HOME_ALIASES.has(command)) {
+    return { name: "go_home", chat };
+  }
+
   if (FOLLOW_ALIASES.has(command)) {
     return { name: "follow", chat };
   }
@@ -84,10 +111,11 @@ function parseCommand(chat: ChatMessageSnapshot, commandPrefix: string): AgentCo
   return { name: "help", chat };
 }
 
-function executeCommand(command: AgentCommand, world: WorldSnapshot, commandPrefix: string): AgentPlan {
+function executeCommand(command: AgentCommand, context: PlannerContext): AgentPlan {
+  const world = context.world;
   switch (command.name) {
     case "help":
-      return addressedPlan([{ type: "say", message: createHelpMessage(world.capabilities, commandPrefix) }]);
+      return addressedPlan([{ type: "say", message: createHelpMessage(world.capabilities, context.commandPrefix) }]);
     case "status":
       return addressedPlan([{ type: "say", message: createStatusMessage(world) }]);
     case "where":
@@ -97,6 +125,21 @@ function executeCommand(command: AgentCommand, world: WorldSnapshot, commandPref
       return addressedPlan([{ type: "say", message: createPositionMessage(world) }]);
     case "world":
       return addressedPlan([{ type: "say", message: createWorldMessage(world) }]);
+    case "home":
+      return addressedPlan([{ type: "say", message: createHomeMessage(context) }]);
+    case "memory":
+      return addressedPlan([{ type: "say", message: createMemoryMessage(context) }]);
+    case "set_home":
+      return addressedPlan([
+        {
+          type: "memory",
+          operation: "set_home",
+          notes: `Set by '${command.chat.username}' through rule command.`,
+        },
+        { type: "say", message: "Home saved at my current position." },
+      ]);
+    case "go_home":
+      return createGoHomePlan(context);
     case "follow":
       return addressedPlan([
         {
@@ -135,7 +178,7 @@ function addressedPlan(steps: AgentPlan["steps"]): AgentPlan {
 
 function createHelpMessage(capabilities: BotCapability[], prefix: string): string {
   const names = capabilities.map((capability) => capability.name).sort().join(", ");
-  return `Agent commands: ${prefix} help/status/where/world/follow/stop. Tools: ${names || "none"}.`;
+  return `Agent commands: ${prefix} help/status/where/world/follow/stop/home/sethome/go home/memory. Tools: ${names || "none"}.`;
 }
 
 function createPositionMessage(world: WorldSnapshot): string {
@@ -169,6 +212,65 @@ function createWorldMessage(world: WorldSnapshot): string {
     .join(", ");
 
   return `Nearby: ${players}.`;
+}
+
+function createHomeMessage(context: PlannerContext): string {
+  const home = context.memory?.home;
+  if (!home) {
+    return "I do not know home yet. Use !bp sethome when I am standing at home.";
+  }
+
+  return `Home: ${formatPosition(home.position)} (${home.dimension ?? "unknown"}).`;
+}
+
+function createMemoryMessage(context: PlannerContext): string {
+  const memory = context.memory;
+  if (!memory) {
+    return "Memory is not loaded yet.";
+  }
+
+  const home = memory.home ? `home=${formatPosition(memory.home.position)}` : "home=unknown";
+  const players = memory.players
+    .slice(0, 3)
+    .map((player) => player.username)
+    .join(", ");
+  const places = memory.places
+    .slice(0, 3)
+    .map((place) => `${place.kind}:${place.name}`)
+    .join(", ");
+
+  return `Memory: ${home}; players=${players || "none"}; places=${places || "none"}.`;
+}
+
+function createGoHomePlan(context: PlannerContext): AgentPlan {
+  const home = context.memory?.home;
+  if (!home) {
+    return addressedPlan([{ type: "say", message: "I do not know home yet. Use !bp sethome first." }]);
+  }
+
+  if (!hasCapability(context.world.capabilities, "go_to_position")) {
+    return addressedPlan([{ type: "say", message: `I know home is at ${formatPosition(home.position)}, but navigation is unavailable.` }]);
+  }
+
+  return addressedPlan([
+    { type: "say", message: `Heading home: ${formatPosition(home.position)}.` },
+    {
+      type: "action",
+      action: {
+        name: "go_to_position",
+        args: {
+          x: home.position.x,
+          y: home.position.y,
+          z: home.position.z,
+          range: 1,
+        },
+      },
+    },
+  ]);
+}
+
+function formatPosition(position: { x: number; y: number; z: number }): string {
+  return `${position.x}, ${position.y}, ${position.z}`;
 }
 
 function hasCapability(capabilities: BotCapability[], actionName: string): boolean {

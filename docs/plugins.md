@@ -63,13 +63,13 @@ Plugins receive a controlled context:
 - `ctx.events.onChat(...)` listens to Minecraft chat messages.
 - `ctx.minecraft.chat(...)` sends chat as the bot.
 - `ctx.minecraft.requireBot()` returns the live Mineflayer bot for advanced behavior.
-- `ctx.minecraft.followPlayer(...)` and `ctx.minecraft.stopCurrentControls(...)` expose safe movement helpers.
+- `ctx.minecraft.followPlayer(...)`, `ctx.minecraft.goToPosition(...)`, and `ctx.minecraft.stopCurrentControls(...)` expose safe movement helpers.
 - `ctx.emitEvent(...)` publishes events to the gateway.
 - `ctx.world.getSnapshot()` reads the current world snapshot.
 
 ## Current Plugins
 
-- `blockpilot.core-actions`: `chat`, `eat_food`, `follow_player`, `retreat_from_threat`, `stop`
+- `blockpilot.core-actions`: `chat`, `eat_food`, `follow_player`, `go_to_position`, `retreat_from_threat`, `stop`
 - `blockpilot.chat-intents`: in-game follow and stop commands
 - `blockpilot.report-position`: `report_position`
 - `blockpilot.world-snapshot`: `world_snapshot`

@@ -29,7 +29,7 @@ import { builtInPlugins } from "./plugins/index.js";
 const { goals, Movements, pathfinder } = pathfinderPackage;
 
 type AuthMode = NonNullable<BotOptions["auth"]>;
-type Goal = InstanceType<(typeof goals)["GoalFollow"]>;
+type PathfinderGoal = InstanceType<(typeof goals)["GoalFollow"]> | InstanceType<(typeof goals)["GoalNear"]>;
 type InventoryWindow = Bot["inventory"];
 type MineflayerBlock = NonNullable<ReturnType<Bot["blockAt"]>>;
 type MineflayerEntity = Bot["entity"];
@@ -39,7 +39,7 @@ type SnapshotVec3 = NonNullable<BotStatus["position"]>;
 
 interface PathfinderController {
   setMovements: (movements: InstanceType<typeof Movements>) => void;
-  setGoal: (goal: Goal | null, dynamic?: boolean) => void;
+  setGoal: (goal: PathfinderGoal | null, dynamic?: boolean) => void;
   stop: () => void;
 }
 
@@ -207,6 +207,7 @@ const pluginRuntime = new PluginRuntime({
       bot?.chat(message);
     },
     followPlayer: (playerName, distance) => followPlayer(requireBot(), playerName, distance),
+    goToPosition: (x, y, z, range) => goToPosition(requireBot(), x, y, z, range),
     requireBot,
     stopCurrentControls: (reason) => {
       stopCurrentControls(requireBot(), reason);
@@ -515,6 +516,32 @@ async function followPlayer(activeBot: Bot, playerName: string, distance = 2): P
     data: {
       playerName,
       distance: followDistance,
+    },
+  };
+}
+
+async function goToPosition(activeBot: Bot, x: number, y: number, z: number, range = 1): Promise<ActionResult> {
+  const arrivalRange = clamp(range, 0, 8);
+  const pathfinderBot = requirePathfinderBot(activeBot);
+  stopCurrentControls(activeBot, `Starting go_to_position to ${round(x)}, ${round(y)}, ${round(z)}`);
+
+  pathfinderBot.pathfinder.setGoal(new goals.GoalNear(x, y, z, arrivalRange), false);
+
+  publishEvent("action.go_to_position", `Going to ${round(x)}, ${round(y)}, ${round(z)}`, {
+    x,
+    y,
+    z,
+    range: arrivalRange,
+  });
+
+  return {
+    ok: true,
+    message: `Going to ${round(x)}, ${round(y)}, ${round(z)}`,
+    data: {
+      x,
+      y,
+      z,
+      range: arrivalRange,
     },
   };
 }

@@ -23,9 +23,11 @@ It supports:
 - A bot worker that joins a Java server through Mineflayer.
 - Worker registration through WebSocket.
 - Event streaming for bot status and Minecraft chat events.
-- Controlled actions: `chat`, `follow_player`, `eat_food`, `retreat_from_threat`, `report_position`, `world_snapshot`, and `stop`.
+- Controlled actions: `chat`, `follow_player`, `go_to_position`, `eat_food`, `retreat_from_threat`, `report_position`, `world_snapshot`, and `stop`.
 - Local world perception for entities, important blocks, inventory, equipment, and safety.
 - Safety reflexes for eating and retreating before the LLM planner runs.
+- Agent memory for home, places, nearby players, and recent observations.
+- Optional low-frequency autonomy for proactive companion suggestions.
 - A bot worker plugin runtime for adding capabilities.
 - A swappable agent runtime with a rule planner and an OpenAI-compatible LLM planner.
 
@@ -79,6 +81,10 @@ Rule planner test commands in Minecraft chat:
 !bp world
 !bp follow
 !bp stop
+!bp sethome
+!bp home
+!bp go home
+!bp memory
 ```
 
 Use the LLM planner when you want natural language like `BlockPilot come here please` or Chinese phrases such as &#x4F60;&#x8FC7;&#x6765;&#x4E00;&#x4E0B; instead of mechanical command words.
@@ -115,6 +121,14 @@ Follow a visible player:
 curl -X POST http://127.0.0.1:8787/bots/BlockPilot/actions \
   -H "content-type: application/json" \
   -d "{\"name\":\"follow_player\",\"args\":{\"playerName\":\"Steve\",\"distance\":2}}"
+```
+
+Go to a coordinate:
+
+```bash
+curl -X POST http://127.0.0.1:8787/bots/BlockPilot/actions \
+  -H "content-type: application/json" \
+  -d "{\"name\":\"go_to_position\",\"args\":{\"x\":16.5,\"y\":66,\"z\":10.5,\"range\":1}}"
 ```
 
 Stop controls:
@@ -173,6 +187,12 @@ curl -X POST http://127.0.0.1:8787/bots/BlockPilot/actions ^
 ```bat
 curl -X POST http://127.0.0.1:8787/bots/BlockPilot/actions ^
   -H "content-type: application/json" ^
+  -d "{\"name\":\"go_to_position\",\"args\":{\"x\":16.5,\"y\":66,\"z\":10.5,\"range\":1}}"
+```
+
+```bat
+curl -X POST http://127.0.0.1:8787/bots/BlockPilot/actions ^
+  -H "content-type: application/json" ^
   -d "{\"name\":\"retreat_from_threat\",\"args\":{\"threatX\":0,\"threatY\":64,\"threatZ\":0,\"durationMs\":1200}}"
 ```
 
@@ -189,9 +209,14 @@ Environment variables:
 - `BLOCKPILOT_AGENT_PLANNER`: `rule` or `llm`. Defaults to `rule`.
 - `BLOCKPILOT_AGENT_PREFIX`: in-game command prefix. Defaults to `!bp`.
 - `BLOCKPILOT_AGENT_ALIASES`: comma-separated names players may use for the bot, such as `bp,helper`.
-- `BLOCKPILOT_AGENT_ALLOWED_ACTIONS`: comma-separated action whitelist. Defaults to `chat,follow_player,stop,report_position,world_snapshot,eat_food,retreat_from_threat`.
+- `BLOCKPILOT_AGENT_ALLOWED_ACTIONS`: comma-separated action whitelist. Defaults to `chat,follow_player,go_to_position,stop,report_position,world_snapshot,eat_food,retreat_from_threat`.
 - `BLOCKPILOT_AGENT_TICK_MS`: polling interval. Defaults to `2000`.
 - `BLOCKPILOT_RESPONSE_DEDUP_MS`: suppress identical bot chat replies within this window. Defaults to `30000`.
+- `BLOCKPILOT_MEMORY_FILE`: JSON file for persistent agent memory. Defaults to `.blockpilot/memory/<botId>.json`.
+- `BLOCKPILOT_AUTONOMY`: enable proactive low-frequency companion chat. Defaults to `false`.
+- `BLOCKPILOT_AUTONOMY_MODE`: `companion`, `guard`, `explore`, `builder`, or `free_roam`. Defaults to `companion`.
+- `BLOCKPILOT_AUTONOMY_INTERVAL_MS`: minimum delay between autonomy messages. Defaults to `120000`.
+- `BLOCKPILOT_AUTONOMY_CHAT`: allow autonomy to speak through chat. Defaults to `true`.
 - `BLOCKPILOT_SAFETY_REFLEX`: enable local safety reflexes. Defaults to `true`.
 - `BLOCKPILOT_SAFETY_COOLDOWN_MS`: minimum delay between safety actions. Defaults to `5000`.
 - `BLOCKPILOT_SAFETY_NOTICE`: send chat notices for safety reflexes. Defaults to `false`.
@@ -199,9 +224,13 @@ Environment variables:
 
 Safety reflexes run before the rule or LLM planner. When the bot is hungry or hurt it can call `eat_food`; when a reachable immediate threat is detected it can call `retreat_from_threat`. The reflex skips threats marked as trapped, such as likely mob-farm entities. Safety reflex chat notices are off by default so the bot does not spam mechanical status lines while acting.
 
+Agent memory is updated from every world snapshot. It remembers a home position, recently seen players, containers, utility blocks, spawners, danger blocks, visited areas, and short observations. The first safe online position becomes a default home; use `!bp sethome` to overwrite it while the bot is standing at the real base. Use `!bp home`, `!bp go home`, and `!bp memory` to test the rule planner memory path.
+
+Autonomy runs only when enabled, the bot can chat, no current task is active, and safety is not `danger` or `critical`. It is deliberately low frequency so it can make companion-style suggestions without flooding chat.
+
 The agent handles only the newest unprocessed player chat message each tick. Older queued chat is marked handled to avoid delayed duplicate-looking replies after safety reflexes or slow LLM calls.
 
-The LLM planner receives the bot id, live Minecraft username, configured aliases, current speaker, recent chat, nearby players, current task, perception data, safety state, and available capabilities. The model must first return `addressedToBot`; if the message is for another player or general server chat, the agent ignores it.
+The LLM planner receives the bot id, live Minecraft username, configured aliases, current speaker, recent chat, nearby players, current task, perception data, safety state, memory, and available capabilities. The model must first return `addressedToBot`; if the message is for another player or general server chat, the agent ignores it. When the player explicitly asks the bot to remember the current place as home, the LLM planner can request a memory `set_home` operation; when asked to return home it can use `memory.home` with `go_to_position`.
 
 LLM planner variables:
 
