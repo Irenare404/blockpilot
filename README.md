@@ -85,6 +85,8 @@ List actions exposed by a bot:
 curl http://127.0.0.1:8787/bots/local-bot/actions
 ```
 
+Each action includes a lightweight parameter schema so agents and future UI surfaces can discover how to call it.
+
 Send a chat message through the bot:
 
 ```bash

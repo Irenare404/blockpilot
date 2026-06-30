@@ -59,6 +59,8 @@ Current built-in chat intents:
 
 The worker now keeps built-in actions behind an internal registry and reports its capabilities to the gateway during registration. The gateway exposes those capabilities through `GET /bots/:botId/actions`; later plugin and agent tooling should attach to this registry shape instead of adding one-off action branches.
 
+Capabilities include lightweight parameter schemas. The schema shape intentionally stays close to JSON Schema object parameters so an agent, web console, or plugin host can discover required arguments before invoking an action.
+
 ### Capability Runtime
 
 Capabilities may be built in or loaded as plugins. The agent should see a unified tool registry regardless of where a capability comes from.

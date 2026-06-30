@@ -50,10 +50,27 @@ export interface FollowPlayerAction {
 
 export type BotAction = ChatAction | StopAction | FollowPlayerAction;
 
+export interface BotCapabilityParameterSchema {
+  type: "string" | "number" | "boolean";
+  description?: string;
+  default?: JsonValue;
+  enum?: JsonValue[];
+  minimum?: number;
+  maximum?: number;
+}
+
+export interface BotCapabilityParametersSchema {
+  type: "object";
+  properties: Record<string, BotCapabilityParameterSchema>;
+  required?: string[];
+  additionalProperties?: boolean;
+}
+
 export interface BotCapability {
   name: BotAction["name"];
   description: string;
   source: "builtin" | "plugin";
+  parameters: BotCapabilityParametersSchema;
 }
 
 export interface ActionResult {
