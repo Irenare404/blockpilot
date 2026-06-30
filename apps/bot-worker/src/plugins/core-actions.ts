@@ -1,15 +1,18 @@
 import {
   getArgs,
+  getOptionalBooleanArg,
   getOptionalNumberArg,
   getOptionalStringArg,
   requireStringArg,
   type WorkerPlugin,
 } from "../plugin-runtime.js";
+import type { SafetyThreatSnapshot, WorldSnapshot } from "@blockpilot/core";
 import type { Bot } from "mineflayer";
 import { Vec3 } from "vec3";
 
 type MineflayerBlock = NonNullable<ReturnType<Bot["blockAt"]>>;
 type MineflayerEntity = Bot["entity"];
+type MineflayerItem = ReturnType<Bot["inventory"]["items"]>[number];
 
 const FOOD_ITEM_NAMES = [
   "cooked_beef",
@@ -46,6 +49,55 @@ const CONTAINER_BLOCK_NAMES = new Set([
   "trapped_chest",
 ]);
 const AIR_BLOCK_NAMES = new Set(["air", "cave_air", "void_air"]);
+const HOSTILE_ENTITY_NAMES = new Set([
+  "blaze",
+  "bogged",
+  "breeze",
+  "cave_spider",
+  "creeper",
+  "drowned",
+  "elder_guardian",
+  "ender_dragon",
+  "enderman",
+  "endermite",
+  "evoker",
+  "ghast",
+  "guardian",
+  "hoglin",
+  "husk",
+  "illusioner",
+  "magma_cube",
+  "phantom",
+  "piglin_brute",
+  "pillager",
+  "ravager",
+  "shulker",
+  "silverfish",
+  "skeleton",
+  "slime",
+  "spider",
+  "stray",
+  "vex",
+  "vindicator",
+  "warden",
+  "witch",
+  "wither",
+  "wither_skeleton",
+  "zoglin",
+  "zombie",
+  "zombie_villager",
+  "zombified_piglin",
+]);
+const HOSTILE_TARGET_ALIASES = new Set([
+  "hostile",
+  "monster",
+  "mob",
+  "threat",
+  "\u602A",
+  "\u602A\u7269",
+  "\u654C\u4EBA",
+  "\u5A01\u80C1",
+]);
 const PLACE_FACES = [
   { offset: new Vec3(0, -1, 0), face: new Vec3(0, 1, 0) },
   { offset: new Vec3(0, 1, 0), face: new Vec3(0, -1, 0) },
@@ -183,6 +235,20 @@ export const coreActionsPlugin: WorkerPlugin = {
               minimum: 1,
               maximum: 16,
             },
+            settleMs: {
+              type: "number",
+              description: "Extra delay after each block is gone before selecting the next block.",
+              default: 300,
+              minimum: 0,
+              maximum: 3000,
+            },
+            waitForDropMs: {
+              type: "number",
+              description: "Maximum time to wait for a nearby dropped item after digging each block.",
+              default: 700,
+              minimum: 0,
+              maximum: 5000,
+            },
           },
           required: ["blockName"],
           additionalProperties: false,
@@ -193,6 +259,8 @@ export const coreActionsPlugin: WorkerPlugin = {
         const blockNames = parseBlockNames(requireStringArg(action, "blockName"));
         const maxDistance = clamp(getOptionalNumberArg(action, "maxDistance") ?? 6, 1, 32);
         const count = Math.floor(clamp(getOptionalNumberArg(action, "count") ?? 1, 1, 16));
+        const settleMs = Math.floor(clamp(getOptionalNumberArg(action, "settleMs") ?? 300, 0, 3_000));
+        const waitForDropMs = Math.floor(clamp(getOptionalNumberArg(action, "waitForDropMs") ?? 700, 0, 5_000));
         const dug: string[] = [];
 
         ctx.minecraft.stopCurrentControls(`Digging ${[...blockNames].join(",")}`);
@@ -204,6 +272,13 @@ export const coreActionsPlugin: WorkerPlugin = {
           }
 
           await bot.dig(block);
+          await waitForBlockToChange(bot, block, 3_000);
+          if (waitForDropMs > 0) {
+            await waitForNearbyDroppedItem(bot, block.position, waitForDropMs);
+          }
+          if (settleMs > 0) {
+            await sleep(settleMs);
+          }
           dug.push(block.name);
         }
 
@@ -217,6 +292,8 @@ export const coreActionsPlugin: WorkerPlugin = {
           data: {
             count: dug.length,
             blockName: [...blockNames].join(","),
+            settleMs,
+            waitForDropMs,
           },
         };
       },
@@ -442,6 +519,150 @@ export const coreActionsPlugin: WorkerPlugin = {
             x: startPosition.x,
             y: startPosition.y,
             z: startPosition.z,
+          },
+        };
+      },
+    );
+
+    ctx.actions.register(
+      {
+        name: "drop_item",
+        description: "Drop an item stack from the bot inventory or the currently held item.",
+        source: "builtin",
+        parameters: {
+          type: "object",
+          properties: {
+            itemName: {
+              type: "string",
+              description: "Optional inventory item name to drop, such as dirt or cobblestone.",
+            },
+            count: {
+              type: "number",
+              description: "Number of items to drop from the selected stack.",
+              default: 1,
+              minimum: 1,
+              maximum: 64,
+            },
+            slot: {
+              type: "number",
+              description: "Optional inventory slot number to drop from.",
+              minimum: 0,
+              maximum: 53,
+            },
+          },
+          additionalProperties: false,
+        },
+      },
+      async (action) => {
+        const bot = ctx.minecraft.requireBot();
+        const itemName = getOptionalStringArg(action, "itemName");
+        const slot = getOptionalNumberArg(action, "slot");
+        const count = Math.floor(clamp(getOptionalNumberArg(action, "count") ?? 1, 1, 64));
+        const item = findInventoryItemForDrop(bot, itemName, slot);
+        if (!item) {
+          throw new Error(itemName ? `No inventory item '${itemName}' found` : "No inventory item found to drop");
+        }
+
+        const dropCount = Math.min(count, item.count);
+        ctx.minecraft.stopCurrentControls(`Dropping ${dropCount} ${item.name}`);
+        await bot.toss(item.type, null, dropCount);
+
+        const data = {
+          itemName: item.name,
+          count: dropCount,
+          slot: item.slot,
+        };
+
+        return {
+          ok: true,
+          message: `Dropped ${dropCount} ${item.displayName ?? item.name}`,
+          data,
+        };
+      },
+    );
+
+    ctx.actions.register(
+      {
+        name: "attack_nearest_entity",
+        description: "Attack the nearest matching non-contained entity once, optionally moving into range first.",
+        source: "builtin",
+        parameters: {
+          type: "object",
+          properties: {
+            targetName: {
+              type: "string",
+              description: "Optional entity name, such as zombie, creeper, hostile, monster, or mob.",
+            },
+            maxDistance: {
+              type: "number",
+              description: "Maximum target search distance in blocks.",
+              default: 8,
+              minimum: 1,
+              maximum: 32,
+            },
+            allowPlayers: {
+              type: "boolean",
+              description: "Allow player entities to be attacked.",
+              default: false,
+            },
+            allowTrapped: {
+              type: "boolean",
+              description: "Allow attacking entities marked trapped or contained by safety perception.",
+              default: false,
+            },
+            follow: {
+              type: "boolean",
+              description: "Move toward the target before attacking if it is outside melee range.",
+              default: true,
+            },
+          },
+          additionalProperties: false,
+        },
+      },
+      async (action) => {
+        const bot = ctx.minecraft.requireBot();
+        const world = ctx.world.getSnapshot();
+        const targetName = getOptionalStringArg(action, "targetName");
+        const maxDistance = clamp(getOptionalNumberArg(action, "maxDistance") ?? 8, 1, 32);
+        const allowPlayers = getOptionalBooleanArg(action, "allowPlayers") ?? false;
+        const allowTrapped = getOptionalBooleanArg(action, "allowTrapped") ?? false;
+        const follow = getOptionalBooleanArg(action, "follow") ?? true;
+        const target = findNearestAttackTarget(bot, world, targetName, maxDistance, allowPlayers, allowTrapped);
+        if (!target) {
+          throw new Error(`No attack target found within ${maxDistance} blocks`);
+        }
+
+        const label = getEntityLabel(target);
+        const startingDistance = target.position.distanceTo(bot.entity.position);
+        ctx.minecraft.stopCurrentControls(`Preparing to attack ${label}`);
+
+        if (follow && startingDistance > 3.2) {
+          await ctx.minecraft.goToPosition(target.position.x, target.position.y, target.position.z, 2);
+          await waitForEntityDistance(bot, target.id, 3.2, Math.min(6_000, 1_000 + maxDistance * 400));
+        }
+
+        const currentTarget = bot.entities[target.id] ?? target;
+        if (currentTarget.isValid === false) {
+          throw new Error(`Target '${label}' is no longer valid`);
+        }
+
+        const attackDistance = currentTarget.position.distanceTo(bot.entity.position);
+        if (attackDistance > 4.5) {
+          throw new Error(`Target '${label}' is still too far away (${attackDistance.toFixed(1)} blocks)`);
+        }
+
+        ctx.minecraft.stopCurrentControls(`Attacking ${label}`);
+        await bot.lookAt(currentTarget.position.offset(0, Math.max(0.5, currentTarget.height * 0.8), 0), true);
+        bot.attack(currentTarget);
+        await sleep(250);
+
+        return {
+          ok: true,
+          message: `Attacked ${label}`,
+          data: {
+            entityId: currentTarget.id,
+            targetName: getEntityName(currentTarget),
+            distance: Math.round(attackDistance * 10) / 10,
           },
         };
       },
@@ -702,8 +923,32 @@ function matchesBlockName(blockName: string, names: Set<string>): boolean {
   return false;
 }
 
+function findInventoryItemForDrop(bot: Bot, itemName: string | undefined, slot: number | undefined): MineflayerItem | undefined {
+  const normalizedItemName = itemName ? normalizeEntityOrItemAlias(itemName) : undefined;
+
+  if (typeof slot === "number" && Number.isFinite(slot)) {
+    const item = bot.inventory.slots[Math.floor(slot)];
+    if (!item) {
+      return undefined;
+    }
+
+    return !normalizedItemName || matchesItemName(item, normalizedItemName) ? item : undefined;
+  }
+
+  if (normalizedItemName) {
+    return bot.inventory.items().find((item) => matchesItemName(item, normalizedItemName));
+  }
+
+  return bot.heldItem ?? bot.inventory.items()[0];
+}
+
 function findInventoryItem(bot: Bot, itemName: string): ReturnType<Bot["inventory"]["items"]>[number] | undefined {
-  return bot.inventory.items().find((item) => item.name === itemName || item.displayName?.toLowerCase() === itemName);
+  return bot.inventory.items().find((item) => matchesItemName(item, itemName));
+}
+
+function matchesItemName(item: MineflayerItem, itemName: string): boolean {
+  const names = [item.name, item.displayName].filter(isString).map((name) => normalizeEntityOrItemAlias(name));
+  return names.includes(itemName);
 }
 
 function findPlacementReference(
@@ -728,6 +973,105 @@ function findPlacementReference(
   }
 
   return undefined;
+}
+
+function findNearestAttackTarget(
+  bot: Bot,
+  world: WorldSnapshot,
+  targetName: string | undefined,
+  maxDistance: number,
+  allowPlayers: boolean,
+  allowTrapped: boolean,
+): MineflayerEntity | undefined {
+  const normalizedTargetName = targetName ? normalizeEntityOrItemAlias(targetName) : undefined;
+  return Object.values(bot.entities)
+    .filter((entity) => entity.id !== bot.entity.id)
+    .filter((entity) => entity.isValid !== false)
+    .filter((entity) => entity.position.distanceTo(bot.entity.position) <= maxDistance)
+    .filter((entity) => allowPlayers || !isPlayerEntity(entity))
+    .filter((entity) => matchesAttackTarget(entity, normalizedTargetName))
+    .filter((entity) => allowTrapped || !isContainedThreat(bot, entity, world))
+    .sort((a, b) => a.position.distanceTo(bot.entity.position) - b.position.distanceTo(bot.entity.position))[0];
+}
+
+function matchesAttackTarget(entity: MineflayerEntity, targetName: string | undefined): boolean {
+  if (!targetName) {
+    return isHostileEntity(entity);
+  }
+
+  if (HOSTILE_TARGET_ALIASES.has(targetName)) {
+    return isHostileEntity(entity);
+  }
+
+  return getEntityNameCandidates(entity).some((candidate) => normalizeEntityOrItemAlias(candidate) === targetName);
+}
+
+function isContainedThreat(bot: Bot, entity: MineflayerEntity, world: WorldSnapshot): boolean {
+  const threat = findMatchingSafetyThreat(bot, entity, world.safety.threats);
+  return threat?.trapped === true || threat?.canReachBot === false || Boolean(threat?.containmentReason);
+}
+
+function findMatchingSafetyThreat(
+  bot: Bot,
+  entity: MineflayerEntity,
+  threats: SafetyThreatSnapshot[],
+): SafetyThreatSnapshot | undefined {
+  const entityName = getEntityName(entity);
+  const entityDistance = entity.position.distanceTo(bot.entity.position);
+
+  return threats.find((threat) => {
+    if (threat.kind !== "entity" || threat.name !== entityName) {
+      return false;
+    }
+
+    if (threat.position) {
+      return entity.position.distanceTo(new Vec3(threat.position.x, threat.position.y, threat.position.z)) <= 2.5;
+    }
+
+    return typeof threat.distance === "number" && Math.abs(threat.distance - entityDistance) <= 2;
+  });
+}
+
+function isHostileEntity(entity: MineflayerEntity): boolean {
+  return entity.type === "hostile" || HOSTILE_ENTITY_NAMES.has(getEntityName(entity));
+}
+
+function isPlayerEntity(entity: MineflayerEntity): boolean {
+  return entity.type === "player" || Boolean(entity.username);
+}
+
+function getEntityLabel(entity: MineflayerEntity): string {
+  return entity.username ?? entity.displayName ?? getEntityName(entity);
+}
+
+function getEntityName(entity: MineflayerEntity): string {
+  return entity.name ?? entity.mobType ?? entity.objectType ?? entity.type ?? "unknown";
+}
+
+function getEntityNameCandidates(entity: MineflayerEntity): string[] {
+  return [entity.name, entity.mobType, entity.objectType, entity.displayName, entity.username, entity.type].filter(isString);
+}
+
+function normalizeEntityOrItemAlias(value: string): string {
+  const normalized = normalizeBlockName(value);
+  switch (normalized) {
+    case "\u50F5\u5C38":
+      return "zombie";
+    case "\u82E6\u529B\u6015":
+      return "creeper";
+    case "\u9AB7\u9AC5":
+    case "\u5C0F\u767D":
+      return "skeleton";
+    case "\u8718\u86DB":
+      return "spider";
+    case "\u6CE5\u571F":
+    case "\u571F":
+      return "dirt";
+    case "\u77F3\u5934":
+      return "stone";
+    default:
+      return normalized;
+  }
 }
 
 function findNearestItemEntity(bot: Bot, itemName: string | undefined, maxDistance: number): MineflayerEntity | undefined {
@@ -755,8 +1099,62 @@ async function waitForItemPickup(bot: Bot, entityId: number, timeoutMs: number):
   return !bot.entities[entityId];
 }
 
+async function waitForBlockToChange(bot: Bot, block: MineflayerBlock, timeoutMs: number): Promise<boolean> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const current = bot.blockAt(block.position);
+    if (!current || current.name !== block.name || AIR_BLOCK_NAMES.has(current.name)) {
+      return true;
+    }
+
+    await sleep(100);
+  }
+
+  const current = bot.blockAt(block.position);
+  return !current || current.name !== block.name || AIR_BLOCK_NAMES.has(current.name);
+}
+
+async function waitForNearbyDroppedItem(bot: Bot, position: Vec3, timeoutMs: number): Promise<boolean> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const droppedItem = Object.values(bot.entities).some(
+      (entity) => (entity.name === "item" || entity.type === "object") && entity.position.distanceTo(position) <= 2.5,
+    );
+    if (droppedItem) {
+      return true;
+    }
+
+    await sleep(100);
+  }
+
+  return false;
+}
+
+async function waitForEntityDistance(bot: Bot, entityId: number, maxDistance: number, timeoutMs: number): Promise<boolean> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const entity = bot.entities[entityId];
+    if (!entity || entity.isValid === false) {
+      return false;
+    }
+
+    if (entity.position.distanceTo(bot.entity.position) <= maxDistance) {
+      return true;
+    }
+
+    await sleep(150);
+  }
+
+  const entity = bot.entities[entityId];
+  return Boolean(entity && entity.position.distanceTo(bot.entity.position) <= maxDistance);
+}
+
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
+}
+
+function isString(value: unknown): value is string {
+  return typeof value === "string";
 }
 
 function sleep(ms: number): Promise<void> {

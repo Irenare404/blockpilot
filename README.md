@@ -23,7 +23,7 @@ It supports:
 - A bot worker that joins a Java server through Mineflayer.
 - Worker registration through WebSocket.
 - Event streaming for bot status and Minecraft chat events.
-- Controlled actions: `chat`, `follow_player`, `go_to_position`, `dig_nearest_block`, `place_block`, `use_nearest_block`, `inspect_nearest_container`, `collect_nearest_item`, `eat_food`, `retreat_from_threat`, `report_position`, `world_snapshot`, and `stop`.
+- Controlled actions: `chat`, `follow_player`, `go_to_position`, `dig_nearest_block`, `place_block`, `use_nearest_block`, `inspect_nearest_container`, `collect_nearest_item`, `drop_item`, `attack_nearest_entity`, `eat_food`, `retreat_from_threat`, `report_position`, `world_snapshot`, and `stop`.
 - Local world perception for entities, important blocks, inventory, equipment, and safety.
 - Safety reflexes for eating and retreating before the LLM planner runs.
 - Agent memory for home, places, nearby players, and recent observations.
@@ -81,6 +81,8 @@ Rule planner test commands in Minecraft chat:
 !bp go home
 !bp memory
 !bp dig dirt
+!bp drop dirt
+!bp attack zombie
 !bp container
 !bp use door
 !bp collect item
@@ -142,6 +144,8 @@ curl -X POST http://127.0.0.1:8787/bots/BlockPilot/actions \
   -d "{\"name\":\"dig_nearest_block\",\"args\":{\"blockName\":\"dirt,grass_block\",\"maxDistance\":6,\"count\":1}}"
 ```
 
+`dig_nearest_block` waits for each dug block to change, gives nearby drops a short moment to appear, and then settles before selecting the next block.
+
 Place a block at a coordinate:
 
 ```bash
@@ -172,6 +176,22 @@ Collect a nearby dropped item:
 curl -X POST http://127.0.0.1:8787/bots/BlockPilot/actions \
   -H "content-type: application/json" \
   -d "{\"name\":\"collect_nearest_item\",\"args\":{\"maxDistance\":16,\"timeoutMs\":8000}}"
+```
+
+Drop an inventory item:
+
+```bash
+curl -X POST http://127.0.0.1:8787/bots/BlockPilot/actions \
+  -H "content-type: application/json" \
+  -d "{\"name\":\"drop_item\",\"args\":{\"itemName\":\"dirt\",\"count\":1}}"
+```
+
+Attack the nearest reachable matching mob once:
+
+```bash
+curl -X POST http://127.0.0.1:8787/bots/BlockPilot/actions \
+  -H "content-type: application/json" \
+  -d "{\"name\":\"attack_nearest_entity\",\"args\":{\"targetName\":\"zombie\",\"maxDistance\":8,\"allowPlayers\":false,\"allowTrapped\":false,\"follow\":true}}"
 ```
 
 Stop controls:
@@ -242,6 +262,18 @@ curl -X POST http://127.0.0.1:8787/bots/BlockPilot/actions ^
 ```bat
 curl -X POST http://127.0.0.1:8787/bots/BlockPilot/actions ^
   -H "content-type: application/json" ^
+  -d "{\"name\":\"drop_item\",\"args\":{\"itemName\":\"dirt\",\"count\":1}}"
+```
+
+```bat
+curl -X POST http://127.0.0.1:8787/bots/BlockPilot/actions ^
+  -H "content-type: application/json" ^
+  -d "{\"name\":\"attack_nearest_entity\",\"args\":{\"targetName\":\"zombie\",\"maxDistance\":8,\"allowPlayers\":false,\"allowTrapped\":false,\"follow\":true}}"
+```
+
+```bat
+curl -X POST http://127.0.0.1:8787/bots/BlockPilot/actions ^
+  -H "content-type: application/json" ^
   -d "{\"name\":\"inspect_nearest_container\",\"args\":{\"maxDistance\":6}}"
 ```
 
@@ -270,7 +302,7 @@ Environment variables:
 - `BLOCKPILOT_AGENT_PLANNER`: `rule` or `llm`. Defaults to `rule`.
 - `BLOCKPILOT_AGENT_PREFIX`: in-game command prefix. Defaults to `!bp`.
 - `BLOCKPILOT_AGENT_ALIASES`: comma-separated names players may use for the bot, such as `bp,helper`.
-- `BLOCKPILOT_AGENT_ALLOWED_ACTIONS`: comma-separated action whitelist. Defaults to `chat,follow_player,go_to_position,dig_nearest_block,place_block,use_nearest_block,inspect_nearest_container,collect_nearest_item,stop,report_position,world_snapshot,eat_food,retreat_from_threat`.
+- `BLOCKPILOT_AGENT_ALLOWED_ACTIONS`: comma-separated action whitelist. Defaults to `chat,follow_player,go_to_position,dig_nearest_block,place_block,use_nearest_block,inspect_nearest_container,collect_nearest_item,drop_item,attack_nearest_entity,stop,report_position,world_snapshot,eat_food,retreat_from_threat`.
 - `BLOCKPILOT_AGENT_TICK_MS`: polling interval. Defaults to `2000`.
 - `BLOCKPILOT_RESPONSE_DEDUP_MS`: suppress identical bot chat replies within this window. Defaults to `30000`.
 - `BLOCKPILOT_AGENT_DECISION_LOG`: decision log mode: `off`, `console`, `file`, `both`, or `true` for console. Defaults to `off`.

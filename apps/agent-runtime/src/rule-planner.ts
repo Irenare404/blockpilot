@@ -12,6 +12,17 @@ type AgentCommand =
       blockName: string;
     }
   | {
+      name: "drop_item";
+      chat: ChatMessageSnapshot;
+      count?: number;
+      itemName?: string;
+    }
+  | {
+      name: "attack";
+      chat: ChatMessageSnapshot;
+      targetName?: string;
+    }
+  | {
       name: "use_block";
       chat: ChatMessageSnapshot;
       blockName: string;
@@ -184,6 +195,16 @@ function parseCommand(chat: ChatMessageSnapshot, commandPrefix: string): AgentCo
     return { name: "use_block", chat, blockName: useBlockName };
   }
 
+  const dropCommand = parseDropCommand(command);
+  if (dropCommand) {
+    return { name: "drop_item", chat, ...dropCommand };
+  }
+
+  const attackCommand = parseAttackCommand(command);
+  if (attackCommand) {
+    return { name: "attack", chat, ...attackCommand };
+  }
+
   const digBlockName = parseDigBlockName(command);
   if (digBlockName) {
     return { name: "dig", chat, blockName: digBlockName };
@@ -231,6 +252,10 @@ function executeCommand(command: AgentCommand, context: PlannerContext): AgentPl
       return createGoHomePlan(context);
     case "dig":
       return createDigPlan(command, context);
+    case "drop_item":
+      return createDropItemPlan(command, context);
+    case "attack":
+      return createAttackPlan(command, context);
     case "use_block":
       return createUseBlockPlan(command, context);
     case "inspect_container":
@@ -283,7 +308,7 @@ function addressedPlan(steps: AgentPlan["steps"]): AgentPlan {
 
 function createHelpMessage(capabilities: BotCapability[], prefix: string): string {
   const names = capabilities.map((capability) => capability.name).sort().join(", ");
-  return `Agent commands: ${prefix} help/status/where/world/follow/stop/home/sethome/go home/memory/dig dirt/container/use door/collect item/place dirt x y z/task collect/task storage/patrol. Tools: ${names || "none"}.`;
+  return `Agent commands: ${prefix} help/status/where/world/follow/stop/home/sethome/go home/memory/dig dirt/drop dirt/attack zombie/container/use door/collect item/place dirt x y z/task collect/task storage/patrol. Tools: ${names || "none"}.`;
 }
 
 function createPositionMessage(world: WorldSnapshot): string {
@@ -390,6 +415,57 @@ function createDigPlan(command: Extract<AgentCommand, { name: "dig" }>, context:
           maxDistance: 6,
           count: 1,
         },
+      },
+    },
+  ]);
+}
+
+function createDropItemPlan(command: Extract<AgentCommand, { name: "drop_item" }>, context: PlannerContext): AgentPlan {
+  if (!hasCapability(context.world.capabilities, "drop_item")) {
+    return addressedPlan([{ type: "say", message: "I understood the drop request, but drop_item is unavailable." }]);
+  }
+
+  const args: JsonRecord = {
+    count: command.count ?? 1,
+  };
+  if (command.itemName) {
+    args.itemName = command.itemName;
+  }
+
+  return addressedPlan([
+    { type: "say", message: command.itemName ? `Dropping ${command.itemName}.` : "Dropping the held item." },
+    {
+      type: "action",
+      action: {
+        name: "drop_item",
+        args,
+      },
+    },
+  ]);
+}
+
+function createAttackPlan(command: Extract<AgentCommand, { name: "attack" }>, context: PlannerContext): AgentPlan {
+  if (!hasCapability(context.world.capabilities, "attack_nearest_entity")) {
+    return addressedPlan([{ type: "say", message: "I understood the attack request, but attack_nearest_entity is unavailable." }]);
+  }
+
+  const args: JsonRecord = {
+    maxDistance: 8,
+    allowPlayers: false,
+    allowTrapped: false,
+    follow: true,
+  };
+  if (command.targetName) {
+    args.targetName = command.targetName;
+  }
+
+  return addressedPlan([
+    { type: "say", message: command.targetName ? `Attacking nearest ${command.targetName}.` : "Attacking the nearest reachable hostile mob." },
+    {
+      type: "action",
+      action: {
+        name: "attack_nearest_entity",
+        args,
       },
     },
   ]);
@@ -611,6 +687,89 @@ function parseUseBlockName(command: string): string | undefined {
   return undefined;
 }
 
+function parseDropCommand(command: string): { itemName?: string; count?: number } | undefined {
+  for (const prefix of ["drop", "discard", "throw"]) {
+    if (command === prefix) {
+      return {};
+    }
+
+    if (command.startsWith(`${prefix} `)) {
+      return parseDropTail(command.slice(prefix.length + 1));
+    }
+  }
+
+  for (const prefix of ["\u4E22", "\u6254"]) {
+    if (command === prefix) {
+      return {};
+    }
+
+    if (command.startsWith(prefix)) {
+      return parseDropTail(command.slice(prefix.length).trim());
+    }
+  }
+
+  return undefined;
+}
+
+function parseDropTail(value: string): { itemName?: string; count?: number } {
+  const parts = normalizeSpacing(value).split(" ").filter(Boolean);
+  if (parts.length === 0) {
+    return {};
+  }
+
+  let count: number | undefined;
+  const first = Number.parseInt(parts[0] ?? "", 10);
+  if (Number.isFinite(first) && String(first) === parts[0]) {
+    count = clampInteger(first, 1, 64);
+    parts.shift();
+  }
+
+  const last = Number.parseInt(parts[parts.length - 1] ?? "", 10);
+  if (count === undefined && Number.isFinite(last) && String(last) === parts[parts.length - 1]) {
+    count = clampInteger(last, 1, 64);
+    parts.pop();
+  }
+
+  const itemName = normalizeRequestedItemName(parts.join(" "));
+  const result: { itemName?: string; count?: number } = {};
+  if (itemName) {
+    result.itemName = itemName;
+  }
+  if (count !== undefined) {
+    result.count = count;
+  }
+  return result;
+}
+
+function parseAttackCommand(command: string): { targetName?: string } | undefined {
+  for (const prefix of ["attack", "hit", "fight"]) {
+    if (command === prefix) {
+      return {};
+    }
+
+    if (command.startsWith(`${prefix} `)) {
+      return parseAttackTail(command.slice(prefix.length + 1));
+    }
+  }
+
+  for (const prefix of ["\u653B\u51FB", "\u6253"]) {
+    if (command === prefix) {
+      return {};
+    }
+
+    if (command.startsWith(prefix)) {
+      return parseAttackTail(command.slice(prefix.length).trim());
+    }
+  }
+
+  return undefined;
+}
+
+function parseAttackTail(value: string): { targetName?: string } {
+  const targetName = normalizeRequestedEntityName(value);
+  return targetName ? { targetName } : {};
+}
+
 function parsePlaceCommand(command: string): { itemName: string; x: number; y: number; z: number } | undefined {
   const match = /^(?:place|put|\u653E\u7F6E|\u653E)\s+([a-z0-9_:\u4e00-\u9fa5]+)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)$/u.exec(command);
   if (!match?.[1] || !match[2] || !match[3] || !match[4]) {
@@ -623,6 +782,52 @@ function parsePlaceCommand(command: string): { itemName: string; x: number; y: n
     y: Number.parseFloat(match[3]),
     z: Number.parseFloat(match[4]),
   };
+}
+
+function normalizeRequestedItemName(value: string): string | undefined {
+  const normalized = normalizeSpacing(value).replace(/^minecraft:/u, "").replace(/\s+/gu, "_");
+  if (!normalized) {
+    return undefined;
+  }
+
+  switch (normalized) {
+    case "\u6CE5\u571F":
+    case "\u571F":
+      return "dirt";
+    case "\u8349\u65B9\u5757":
+      return "grass_block";
+    case "\u77F3\u5934":
+      return "stone";
+    case "\u6728\u677F":
+    case "planks":
+      return "oak_planks";
+    default:
+      return normalized;
+  }
+}
+
+function normalizeRequestedEntityName(value: string): string | undefined {
+  const normalized = normalizeSpacing(value).replace(/^minecraft:/u, "").replace(/\s+/gu, "_");
+  if (!normalized) {
+    return undefined;
+  }
+
+  switch (normalized) {
+    case "\u602A":
+    case "\u602A\u7269":
+      return "hostile";
+    case "\u50F5\u5C38":
+      return "zombie";
+    case "\u82E6\u529B\u6015":
+      return "creeper";
+    case "\u9AB7\u9AC5":
+    case "\u5C0F\u767D":
+      return "skeleton";
+    case "\u8718\u86DB":
+      return "spider";
+    default:
+      return normalized;
+  }
 }
 
 function normalizePlaceItemName(value: string): string {
@@ -675,4 +880,8 @@ function normalizeRequestedBlockName(value: string, allowUnknown: boolean): stri
     default:
       return allowUnknown && normalized ? normalized : undefined;
   }
+}
+
+function clampInteger(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
 }

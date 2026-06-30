@@ -177,6 +177,11 @@ export function getOptionalNumberArg(action: BotAction, key: string): number | u
   return typeof value === "number" ? value : undefined;
 }
 
+export function getOptionalBooleanArg(action: BotAction, key: string): boolean | undefined {
+  const value = getArgs(action)[key];
+  return typeof value === "boolean" ? value : undefined;
+}
+
 export function getOptionalStringArg(action: BotAction, key: string): string | undefined {
   const value = getArgs(action)[key];
   return typeof value === "string" ? value : undefined;

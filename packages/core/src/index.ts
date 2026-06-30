@@ -69,6 +69,8 @@ export interface DigNearestBlockAction {
     blockName: string;
     maxDistance?: number;
     count?: number;
+    settleMs?: number;
+    waitForDropMs?: number;
   };
 }
 
@@ -106,6 +108,26 @@ export interface CollectNearestItemAction {
   };
 }
 
+export interface DropItemAction {
+  name: "drop_item";
+  args?: {
+    itemName?: string;
+    count?: number;
+    slot?: number;
+  };
+}
+
+export interface AttackNearestEntityAction {
+  name: "attack_nearest_entity";
+  args?: {
+    targetName?: string;
+    maxDistance?: number;
+    allowPlayers?: boolean;
+    allowTrapped?: boolean;
+    follow?: boolean;
+  };
+}
+
 export type BuiltInBotAction =
   | ChatAction
   | StopAction
@@ -115,7 +137,9 @@ export type BuiltInBotAction =
   | PlaceBlockAction
   | UseNearestBlockAction
   | InspectNearestContainerAction
-  | CollectNearestItemAction;
+  | CollectNearestItemAction
+  | DropItemAction
+  | AttackNearestEntityAction;
 
 export interface BotCapabilityParameterSchema {
   type: "string" | "number" | "boolean";
