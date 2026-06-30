@@ -120,6 +120,14 @@ Fetch the bot world snapshot:
 curl http://127.0.0.1:8787/bots/BlockPilot/world
 ```
 
+The world snapshot includes:
+
+- bot status, current task, recent tasks, nearby players, and recent chat
+- nearby entities grouped into hostile mobs, animals, dropped items, and others
+- nearby utility blocks, danger blocks, containers, and spawners
+- bot inventory, held item, and basic equipment
+- a first safety assessment with `safe`, `watch`, `danger`, or `critical`
+
 List current and recent tasks:
 
 ```bash
@@ -234,7 +242,9 @@ Environment variables:
 
 The rule planner handles `!bp help`, `!bp status`, `!bp where`, `!bp world`, `!bp follow`, and `!bp stop`.
 
-The LLM planner sends the model the bot id, the live Minecraft username from the world snapshot, configured aliases, the current speaker, recent chat, nearby players, current task, and available capabilities. The model must first return `addressedToBot`; if the message is for another player or general server chat, the agent ignores it. This lets it understand natural phrases such as `BlockPilot 你过来一下`, `小助手跟我走`, or `你先停一下`, while still avoiding random reactions to other players.
+The LLM planner sends the model the bot id, the live Minecraft username from the world snapshot, configured aliases, the current speaker, recent chat, nearby players, current task, perception data, safety state, and available capabilities. The model must first return `addressedToBot`; if the message is for another player or general server chat, the agent ignores it. This lets it understand natural phrases such as `BlockPilot 你过来一下`, `小助手跟我走`, or `你先停一下`, while still avoiding random reactions to other players.
+
+The safety model is conservative. A hostile mob near a spawner or vertically separated from the bot is marked as likely contained, so mob farms and spawner machines do not automatically become attack targets.
 
 LLM planner variables:
 

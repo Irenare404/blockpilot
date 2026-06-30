@@ -81,6 +81,7 @@ export interface BotCapability {
 export interface NearbyPlayerSnapshot {
   username: string;
   position?: Vec3Like;
+  velocity?: Vec3Like;
   distance?: number;
 }
 
@@ -88,6 +89,84 @@ export interface ChatMessageSnapshot {
   username: string;
   message: string;
   receivedAt: string;
+}
+
+export type WorldEntityKind = "hostile" | "passive" | "item" | "other";
+
+export interface WorldEntitySnapshot {
+  id: number;
+  name: string;
+  displayName?: string;
+  kind: WorldEntityKind;
+  position?: Vec3Like;
+  velocity?: Vec3Like;
+  distance?: number;
+  username?: string;
+}
+
+export interface WorldEntitiesSnapshot {
+  mobs: WorldEntitySnapshot[];
+  animals: WorldEntitySnapshot[];
+  items: WorldEntitySnapshot[];
+  others: WorldEntitySnapshot[];
+}
+
+export type WorldBlockKind = "container" | "utility" | "danger" | "spawner";
+
+export interface WorldBlockSnapshot {
+  name: string;
+  displayName?: string;
+  kind: WorldBlockKind;
+  position: Vec3Like;
+  distance?: number;
+}
+
+export interface WorldBlocksSnapshot {
+  nearbyUtilityBlocks: WorldBlockSnapshot[];
+  nearbyDangerBlocks: WorldBlockSnapshot[];
+  nearbyContainers: WorldBlockSnapshot[];
+  nearbySpawners: WorldBlockSnapshot[];
+}
+
+export interface InventoryItemSnapshot {
+  name: string;
+  displayName?: string;
+  count: number;
+  slot?: number;
+  durabilityUsed?: number;
+  maxDurability?: number;
+}
+
+export interface EquipmentItemSnapshot extends InventoryItemSnapshot {
+  slotName: "head" | "torso" | "legs" | "feet" | "hand" | "off-hand";
+}
+
+export interface SelfSnapshot {
+  health?: number;
+  food?: number;
+  oxygenLevel?: number;
+  heldItem?: InventoryItemSnapshot;
+  inventory: InventoryItemSnapshot[];
+  equipment: EquipmentItemSnapshot[];
+}
+
+export type DangerLevel = "safe" | "watch" | "danger" | "critical";
+
+export interface SafetyThreatSnapshot {
+  kind: "entity" | "block" | "status";
+  name: string;
+  severity: DangerLevel;
+  reason: string;
+  position?: Vec3Like;
+  distance?: number;
+  trapped?: boolean;
+  canReachBot?: boolean;
+}
+
+export interface SafetySnapshot {
+  dangerLevel: DangerLevel;
+  threats: SafetyThreatSnapshot[];
+  reasons: string[];
 }
 
 export type BotTaskState = "running" | "completed" | "failed" | "cancelled";
@@ -114,6 +193,10 @@ export interface WorldSnapshot {
   recentTasks: BotTaskSnapshot[];
   nearbyPlayers: NearbyPlayerSnapshot[];
   recentChat: ChatMessageSnapshot[];
+  entities: WorldEntitiesSnapshot;
+  blocks: WorldBlocksSnapshot;
+  self: SelfSnapshot;
+  safety: SafetySnapshot;
 }
 
 export interface ActionResult {

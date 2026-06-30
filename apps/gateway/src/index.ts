@@ -341,6 +341,19 @@ function handleWorkerMessage(socket: WebSocket, data: RawData): void {
 }
 
 function createFallbackWorldSnapshot(session: WorkerSession): WorldSnapshot {
+  const self: WorldSnapshot["self"] = {
+    inventory: [],
+    equipment: [],
+  };
+
+  if (typeof session.status.health === "number") {
+    self.health = session.status.health;
+  }
+
+  if (typeof session.status.food === "number") {
+    self.food = session.status.food;
+  }
+
   const snapshot: WorldSnapshot = {
     botId: session.botId,
     updatedAt: nowIso(),
@@ -349,6 +362,24 @@ function createFallbackWorldSnapshot(session: WorkerSession): WorldSnapshot {
     recentTasks: getRecentTasks(session),
     nearbyPlayers: [],
     recentChat: [],
+    entities: {
+      mobs: [],
+      animals: [],
+      items: [],
+      others: [],
+    },
+    blocks: {
+      nearbyUtilityBlocks: [],
+      nearbyDangerBlocks: [],
+      nearbyContainers: [],
+      nearbySpawners: [],
+    },
+    self,
+    safety: {
+      dangerLevel: "safe",
+      threats: [],
+      reasons: [],
+    },
   };
 
   if (session.currentTask) {

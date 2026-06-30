@@ -65,7 +65,17 @@ The worker now keeps built-in actions behind an internal registry and reports it
 
 Capabilities include lightweight parameter schemas. The schema shape intentionally stays close to JSON Schema object parameters so an agent, web console, or plugin host can discover required arguments before invoking an action.
 
-World snapshots are published by the worker and cached by the gateway. They include bot status, capabilities, nearby players, and recent chat. This is the first context surface intended for the agent runtime.
+World snapshots are published by the worker and cached by the gateway. They include bot status, capabilities, nearby players, recent chat, nearby entities, important nearby blocks, inventory/equipment summaries, and a lightweight safety assessment. This is the first context surface intended for the agent runtime.
+
+The current perception pass is intentionally local and bounded:
+
+- Entity perception groups nearby hostile mobs, animals, dropped items, and other entities.
+- Player perception includes position, distance, and velocity so the agent can notice movement.
+- Block perception tracks nearby containers, utility blocks, danger blocks, and spawners.
+- Self perception summarizes health, food, oxygen, held item, inventory, and basic equipment.
+- Safety perception grades the local situation as `safe`, `watch`, `danger`, or `critical`.
+
+The safety assessment avoids treating every monster as an enemy. Hostile entities near spawners or clearly separated from the bot are marked as likely contained, which lets the agent distinguish mob farms and spawner machines from immediate threats.
 
 Task snapshots are published for every action invocation. Short actions usually move from `running` to `completed` immediately; long-running actions such as `follow_player` remain `running` until replaced, stopped, failed, or cancelled. The gateway exposes current and recent tasks through `GET /bots/:botId/tasks`.
 
@@ -83,6 +93,7 @@ The agent runtime hosts a swappable planner. The first planner is rule-based and
 The LLM planner keeps the same boundary but replaces command parsing with model planning:
 
 - The planner receives the bot id, live Minecraft username, configured aliases, current speaker, recent chat, nearby players, task state, and available capabilities.
+- The planner also receives local perception and safety state, so it can reason about mobs, containers, dangerous blocks, inventory, and player movement.
 - The model must explicitly decide whether the current message is addressed to the bot before replying or invoking tools.
 - The model returns structured JSON with `addressedToBot`, a short optional reply, and a bounded list of actions.
 - The agent runtime applies an action whitelist and the live capability registry before forwarding any action to the gateway.
