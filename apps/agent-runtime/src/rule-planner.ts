@@ -1,4 +1,4 @@
-import type { BotCapability, ChatMessageSnapshot, WorldSnapshot } from "@blockpilot/core";
+import type { BotCapability, ChatMessageSnapshot, JsonRecord, WorldSnapshot } from "@blockpilot/core";
 import { ignorePlan, type AgentPlan, type AgentPlanner, type PlannerContext } from "./planner.js";
 
 type AgentCommand =
@@ -35,6 +35,9 @@ type AgentCommand =
         | "set_home"
         | "status"
         | "stop"
+        | "task_collect"
+        | "task_patrol"
+        | "task_storage"
         | "where"
         | "world";
       chat: ChatMessageSnapshot;
@@ -70,6 +73,9 @@ const COLLECT_ALIASES = new Set([
   "\u6361\u4E1C\u897F",
   "\u6361\u6389\u843D\u7269",
 ]);
+const TASK_COLLECT_ALIASES = new Set(["task collect", "collect task", "queue collect", "\u4EFB\u52A1 \u6536\u96C6"]);
+const TASK_STORAGE_ALIASES = new Set(["task storage", "task container", "storage task", "\u4EFB\u52A1 \u4ED3\u5E93"]);
+const TASK_PATROL_ALIASES = new Set(["patrol", "task patrol", "queue patrol", "\u5DE1\u903B", "\u4EFB\u52A1 \u5DE1\u903B"]);
 const HOME_ALIASES = new Set(["home", "base", "\u5BB6", "\u57FA\u5730"]);
 const MEMORY_ALIASES = new Set(["memory", "mem", "\u8BB0\u5FC6"]);
 const SET_HOME_ALIASES = new Set([
@@ -156,6 +162,18 @@ function parseCommand(chat: ChatMessageSnapshot, commandPrefix: string): AgentCo
     return { name: "collect_item", chat };
   }
 
+  if (TASK_COLLECT_ALIASES.has(command)) {
+    return { name: "task_collect", chat };
+  }
+
+  if (TASK_STORAGE_ALIASES.has(command)) {
+    return { name: "task_storage", chat };
+  }
+
+  if (TASK_PATROL_ALIASES.has(command)) {
+    return { name: "task_patrol", chat };
+  }
+
   const placeCommand = parsePlaceCommand(command);
   if (placeCommand) {
     return { name: "place_block", chat, ...placeCommand };
@@ -221,6 +239,12 @@ function executeCommand(command: AgentCommand, context: PlannerContext): AgentPl
       return createCollectItemPlan(context);
     case "place_block":
       return createPlaceBlockPlan(command, context);
+    case "task_collect":
+      return createCollectTaskPlan(context);
+    case "task_storage":
+      return createStorageTaskPlan(context);
+    case "task_patrol":
+      return createPatrolTaskPlan(context);
     case "follow":
       return addressedPlan([
         {
@@ -259,7 +283,7 @@ function addressedPlan(steps: AgentPlan["steps"]): AgentPlan {
 
 function createHelpMessage(capabilities: BotCapability[], prefix: string): string {
   const names = capabilities.map((capability) => capability.name).sort().join(", ");
-  return `Agent commands: ${prefix} help/status/where/world/follow/stop/home/sethome/go home/memory/dig dirt/container/use door/collect item/place dirt x y z. Tools: ${names || "none"}.`;
+  return `Agent commands: ${prefix} help/status/where/world/follow/stop/home/sethome/go home/memory/dig dirt/container/use door/collect item/place dirt x y z/task collect/task storage/patrol. Tools: ${names || "none"}.`;
 }
 
 function createPositionMessage(world: WorldSnapshot): string {
@@ -452,6 +476,97 @@ function createPlaceBlockPlan(command: Extract<AgentCommand, { name: "place_bloc
   ]);
 }
 
+function createCollectTaskPlan(context: PlannerContext): AgentPlan {
+  if (!hasCapability(context.world.capabilities, "collect_nearest_item")) {
+    return addressedPlan([{ type: "say", message: "I cannot queue collection because collect_nearest_item is unavailable." }]);
+  }
+
+  return addressedPlan([
+    { type: "say", message: "Queued a short item collection task." },
+    {
+      type: "task",
+      task: {
+        title: "Collect nearby dropped items",
+        source: "rule",
+        steps: [
+          createTaskAction("collect_nearest_item", { maxDistance: 16, timeoutMs: 8_000 }, "Collect nearest item"),
+          { type: "wait", durationMs: 1_000, description: "Brief pause after pickup" },
+          createTaskAction("collect_nearest_item", { maxDistance: 16, timeoutMs: 8_000 }, "Collect another nearby item"),
+          { type: "wait", durationMs: 1_000, description: "Brief pause after pickup" },
+          createTaskAction("collect_nearest_item", { maxDistance: 16, timeoutMs: 8_000 }, "Collect a final nearby item"),
+          { type: "say", message: "Collection task finished." },
+        ],
+      },
+    },
+  ]);
+}
+
+function createStorageTaskPlan(context: PlannerContext): AgentPlan {
+  if (!hasCapability(context.world.capabilities, "inspect_nearest_container")) {
+    return addressedPlan([{ type: "say", message: "I cannot queue storage inspection because inspect_nearest_container is unavailable." }]);
+  }
+
+  return addressedPlan([
+    { type: "say", message: "Queued a storage inspection task." },
+    {
+      type: "task",
+      task: {
+        title: "Inspect nearest storage",
+        source: "rule",
+        steps: [
+          createTaskAction("inspect_nearest_container", { maxDistance: 6 }, "Inspect nearest container"),
+          { type: "say", message: "Storage inspection task finished." },
+        ],
+      },
+    },
+  ]);
+}
+
+function createPatrolTaskPlan(context: PlannerContext): AgentPlan {
+  const position = context.world.status.position;
+  if (!position) {
+    return addressedPlan([{ type: "say", message: "I cannot patrol because I do not know my current position." }]);
+  }
+
+  if (!hasCapability(context.world.capabilities, "go_to_position")) {
+    return addressedPlan([{ type: "say", message: "I cannot patrol because go_to_position is unavailable." }]);
+  }
+
+  const y = Math.round(position.y);
+  const points = [
+    { x: Math.round(position.x + 6), y, z: Math.round(position.z) },
+    { x: Math.round(position.x), y, z: Math.round(position.z + 6) },
+    { x: Math.round(position.x - 6), y, z: Math.round(position.z) },
+    { x: Math.round(position.x), y, z: Math.round(position.z) },
+  ];
+
+  return addressedPlan([
+    { type: "say", message: "Queued a short patrol task." },
+    {
+      type: "task",
+      task: {
+        title: "Short local patrol",
+        source: "rule",
+        steps: points.flatMap((point, index) => [
+          createTaskAction("go_to_position", { ...point, range: 1 }, `Patrol point ${index + 1}`),
+          { type: "wait", durationMs: 8_000, description: "Wait while moving toward patrol point" } as const,
+        ]),
+      },
+    },
+  ]);
+}
+
+function createTaskAction(name: string, args: JsonRecord, description: string) {
+  return {
+    type: "action" as const,
+    action: {
+      name,
+      args,
+    },
+    description,
+  };
+}
+
 function formatPosition(position: { x: number; y: number; z: number }): string {
   return `${position.x}, ${position.y}, ${position.z}`;
 }
@@ -497,7 +612,7 @@ function parseUseBlockName(command: string): string | undefined {
 }
 
 function parsePlaceCommand(command: string): { itemName: string; x: number; y: number; z: number } | undefined {
-  const match = /^(?:place|put|放置|放)\s+([a-z0-9_:\u4e00-\u9fa5]+)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)$/u.exec(command);
+  const match = /^(?:place|put|\u653E\u7F6E|\u653E)\s+([a-z0-9_:\u4e00-\u9fa5]+)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)$/u.exec(command);
   if (!match?.[1] || !match[2] || !match[3] || !match[4]) {
     return undefined;
   }

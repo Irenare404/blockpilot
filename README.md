@@ -85,6 +85,9 @@ Rule planner test commands in Minecraft chat:
 !bp use door
 !bp collect item
 !bp place dirt 16 66 10
+!bp task collect
+!bp task storage
+!bp patrol
 ```
 
 Use the LLM planner when you want natural language like `BlockPilot come here please` or Chinese phrases such as &#x4F60;&#x8FC7;&#x6765;&#x4E00;&#x4E0B; instead of mechanical command words.
@@ -292,7 +295,9 @@ The agent handles only the newest unprocessed player chat message each tick. Old
 
 Decision logs record each agent tick as structured JSONL events: world summary, safety result, selected chat, planner result, skipped steps, executed actions, action results, and errors. Use `BLOCKPILOT_AGENT_DECISION_LOG=console` while debugging, or `both` to write the JSONL file and also print to the terminal.
 
-The LLM planner receives the bot id, live Minecraft username, configured aliases, current speaker, recent chat, nearby players, current task, perception data, safety state, memory, and available capabilities. The model must first return `addressedToBot`; if the message is for another player or general server chat, the agent ignores it. When explaining threats it must use exact hostile mob facts from the snapshot and must not rename one mob type as another. When the player explicitly asks the bot to remember the current place as home, the LLM planner can request a memory `set_home` operation; when asked to return home it can use `memory.home` with `go_to_position`.
+The agent has an in-process task queue for short multi-step goals. Queued tasks run one step at a time when no new player chat is waiting, the worker has no active task, and safety is not `danger` or `critical`. Current rule-planner task tests are `!bp task collect`, `!bp task storage`, and `!bp patrol`.
+
+The LLM planner receives the bot id, live Minecraft username, configured aliases, current speaker, recent chat, nearby players, current task, perception data, safety state, memory, queued agent tasks, and available capabilities. The model must first return `addressedToBot`; if the message is for another player or general server chat, the agent ignores it. When explaining threats it must use exact hostile mob facts from the snapshot and must not rename one mob type as another. When the player explicitly asks the bot to remember the current place as home, the LLM planner can request a memory `set_home` operation; when asked to return home it can use `memory.home` with `go_to_position`. For multi-step requests, the LLM can create a queued task with `action`, `say`, and `wait` steps.
 
 LLM planner variables:
 

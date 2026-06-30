@@ -1,5 +1,6 @@
 import type { BotAction, ChatMessageSnapshot, WorldSnapshot } from "@blockpilot/core";
 import type { AgentMemorySnapshot } from "./memory-store.js";
+import type { AgentTaskDefinition, AgentTaskSnapshot } from "./task-queue.js";
 
 export interface PlannerContext {
   botId: string;
@@ -10,6 +11,7 @@ export interface PlannerContext {
   chat: ChatMessageSnapshot;
   world: WorldSnapshot;
   memory?: AgentMemorySnapshot;
+  tasks?: AgentTaskSnapshot[];
 }
 
 export type AgentPlanStep =
@@ -25,6 +27,10 @@ export type AgentPlanStep =
       type: "memory";
       operation: "set_home";
       notes?: string;
+    }
+  | {
+      type: "task";
+      task: AgentTaskDefinition;
     };
 
 export interface AgentPlan {

@@ -3,6 +3,7 @@ import type { AgentDecisionLogger } from "./decision-log.js";
 import type { GatewayClient } from "./gateway-client.js";
 import type { AgentMemorySnapshot, MemoryStore } from "./memory-store.js";
 import type { AgentPlan, AgentPlanStep, AgentPlanner, PlannerContext } from "./planner.js";
+import type { AgentTaskQueue } from "./task-queue.js";
 
 export interface SafetyHandler {
   handle(world: WorldSnapshot): Promise<boolean>;
@@ -22,6 +23,7 @@ export interface ChatAgentConfig {
   safety?: SafetyHandler;
   autonomy?: AutonomyHandler;
   decisionLogger?: AgentDecisionLogger;
+  taskQueue?: AgentTaskQueue;
 }
 
 export class ChatAgent {
@@ -53,6 +55,7 @@ export class ChatAgent {
       botUsername,
       world: compactWorld(world),
       memory: memorySnapshot ? compactMemory(memorySnapshot) : undefined,
+      tasks: this.config.taskQueue?.snapshots(),
       allowedActionNames: this.config.allowedActionNames,
       capabilityNames: world.capabilities.map((capability) => capability.name),
     });
@@ -78,6 +81,18 @@ export class ChatAgent {
       handledChatCount: this.handledChatSet.size,
     });
     if (!nextChat) {
+      const taskActed =
+        (await this.config.taskQueue?.tick(world, {
+          canRunAction: (actionName) => this.canRunAction(world.capabilities, actionName),
+          log: (type, payload) => this.log(type, { tickId, ...payload }),
+          runAction: (action) => this.client.runAction(action),
+          say: (message) => this.sendChatMessage(message, world, tickId, "task"),
+        })) ?? false;
+      if (taskActed) {
+        this.log("tick.end", { tickId, outcome: "task_action" });
+        return;
+      }
+
       let autonomyActed = false;
       if (memorySnapshot) {
         autonomyActed = (await this.config.autonomy?.handle(world, memorySnapshot)) ?? false;
@@ -98,6 +113,10 @@ export class ChatAgent {
     };
     if (memorySnapshot) {
       context.memory = memorySnapshot;
+    }
+    const taskSnapshots = this.config.taskQueue?.snapshots();
+    if (taskSnapshots) {
+      context.tasks = taskSnapshots;
     }
 
     const plan = await this.planner.plan(context);
@@ -122,26 +141,13 @@ export class ChatAgent {
   private async executePlan(plan: AgentPlan, world: WorldSnapshot, tickId: string): Promise<void> {
     for (const step of plan.steps) {
       if (step.type === "say") {
-        if (!this.canRunAction(world.capabilities, "chat")) {
-          console.warn("[agent-runtime] skipped unavailable action 'chat'");
-          this.log("step.skipped", { tickId, step: compactStep(step), reason: "chat_unavailable_or_not_allowed" });
-          continue;
-        }
-
-        if (this.isDuplicateReply(step.message)) {
-          console.warn("[agent-runtime] skipped duplicate chat reply");
-          this.log("step.skipped", { tickId, step: compactStep(step), reason: "duplicate_reply" });
-          continue;
-        }
-
-        this.rememberReply(step.message);
-        this.log("step.execute", { tickId, step: compactStep(step) });
         try {
-          const result = await this.client.chat(step.message);
+          this.log("step.execute", { tickId, step: compactStep(step) });
+          const result = await this.sendChatMessage(step.message, world, tickId, "plan");
           this.log("step.result", { tickId, step: compactStep(step), result });
         } catch (error) {
           this.log("step.error", { tickId, step: compactStep(step), error: asErrorMessage(error) });
-          throw error;
+          console.warn(`[agent-runtime] skipped chat reply: ${asErrorMessage(error)}`);
         }
         continue;
       }
@@ -159,6 +165,20 @@ export class ChatAgent {
         continue;
       }
 
+      if (step.type === "task") {
+        try {
+          const snapshot = this.config.taskQueue?.enqueue(step.task);
+          this.log("step.result", { tickId, step: compactStep(step), result: snapshot });
+          if (!snapshot) {
+            this.log("step.skipped", { tickId, step: compactStep(step), reason: "task_queue_unavailable" });
+          }
+        } catch (error) {
+          this.log("step.error", { tickId, step: compactStep(step), error: asErrorMessage(error) });
+          throw error;
+        }
+        continue;
+      }
+
       if (!this.canRunAction(world.capabilities, step.action.name)) {
         console.warn(`[agent-runtime] skipped unavailable action '${step.action.name}'`);
         this.log("step.skipped", { tickId, step: compactStep(step), reason: "action_unavailable_or_not_allowed" });
@@ -167,6 +187,12 @@ export class ChatAgent {
 
       this.log("step.execute", { tickId, step: compactStep(step) });
       try {
+        if (step.action.name === "stop") {
+          const cancelled = this.config.taskQueue?.cancelActive("Cancelled by stop action") ?? 0;
+          if (cancelled > 0) {
+            this.log("task.cancelled", { tickId, cancelled, reason: "stop_action" });
+          }
+        }
         const result = await this.client.runAction(step.action);
         this.log("step.result", { tickId, step: compactStep(step), result });
       } catch (error) {
@@ -174,6 +200,21 @@ export class ChatAgent {
         throw error;
       }
     }
+  }
+
+  private async sendChatMessage(message: string, world: WorldSnapshot, tickId: string, source: string): Promise<unknown> {
+    if (!this.canRunAction(world.capabilities, "chat")) {
+      this.log("step.skipped", { tickId, source, reason: "chat_unavailable_or_not_allowed" });
+      throw new Error("chat is unavailable or not allowed");
+    }
+
+    if (this.isDuplicateReply(message)) {
+      this.log("step.skipped", { tickId, source, reason: "duplicate_reply", message });
+      throw new Error("duplicate chat reply");
+    }
+
+    this.rememberReply(message);
+    return this.client.chat(message);
   }
 
   private takeLatestUnhandledChat(chat: ChatMessageSnapshot[], botNames: string[]): ChatMessageSnapshot | undefined {
@@ -340,6 +381,13 @@ function compactStep(step: AgentPlanStep): Record<string, unknown> {
       type: "memory",
       operation: step.operation,
       notes: step.notes,
+    };
+  }
+
+  if (step.type === "task") {
+    return {
+      type: "task",
+      task: step.task,
     };
   }
 

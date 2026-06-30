@@ -9,6 +9,7 @@ import { createDefaultMemoryPath, MemoryStore, readAutonomyMode, type AutonomyMo
 import type { AgentPlanner } from "./planner.js";
 import { RulePlanner } from "./rule-planner.js";
 import { SafetyReflex } from "./safety-reflex.js";
+import { AgentTaskQueue } from "./task-queue.js";
 
 type PlannerKind = "llm" | "rule";
 
@@ -53,6 +54,7 @@ const config = readConfig();
 const client = new GatewayClient(config.gatewayHttpUrl, config.botId);
 const planner = createPlanner(config);
 const decisionLogger = new DecisionLogger(config.decisionLog);
+const taskQueue = new AgentTaskQueue();
 const memory = new MemoryStore(config.memoryFilePath, config.botId, config.autonomy.mode);
 await memory.load();
 const safety = new SafetyReflex(client, {
@@ -79,6 +81,7 @@ const agent = new ChatAgent(client, planner, {
   safety,
   autonomy,
   decisionLogger,
+  taskQueue,
 });
 
 let shuttingDown = false;
