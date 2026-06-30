@@ -50,6 +50,31 @@ pnpm build
 
 ## Run
 
+For local offline-mode testing on Windows, start both services with:
+
+```bat
+start-local-offline.bat
+```
+
+This uses:
+
+- Gateway: `127.0.0.1:8787`
+- Minecraft server: `127.0.0.1:25565`
+- Bot username: `BlockPilot`
+- Auth mode: `offline`
+
+You can override the bot username:
+
+```bat
+start-local-offline.bat MyBotName
+```
+
+You can also override the Minecraft port:
+
+```bat
+start-local-offline.bat MyBotName 25566
+```
+
 Start the gateway:
 
 ```bash
