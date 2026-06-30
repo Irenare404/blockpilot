@@ -15,14 +15,16 @@ import {
   type WorkerToGatewayMessage,
 } from "@blockpilot/core";
 import { createBot, type Bot, type BotOptions } from "mineflayer";
-import { goals, Movements, pathfinder } from "mineflayer-pathfinder";
+import pathfinderPackage from "mineflayer-pathfinder";
 import { WebSocket, type RawData } from "ws";
+
+const { goals, Movements, pathfinder } = pathfinderPackage;
 
 type AuthMode = NonNullable<BotOptions["auth"]>;
 type Goal = InstanceType<(typeof goals)["GoalFollow"]>;
 
 interface PathfinderController {
-  setMovements: (movements: Movements) => void;
+  setMovements: (movements: InstanceType<typeof Movements>) => void;
   setGoal: (goal: Goal | null, dynamic?: boolean) => void;
   stop: () => void;
 }
