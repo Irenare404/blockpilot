@@ -2,11 +2,16 @@ import type { BotCapability, ChatMessageSnapshot, WorldSnapshot } from "@blockpi
 import type { GatewayClient } from "./gateway-client.js";
 import type { AgentPlan, AgentPlanner } from "./planner.js";
 
+export interface SafetyHandler {
+  handle(world: WorldSnapshot): Promise<boolean>;
+}
+
 export interface ChatAgentConfig {
   botId: string;
   commandPrefix: string;
   aliases: string[];
   allowedActionNames: string[];
+  safety?: SafetyHandler;
 }
 
 export class ChatAgent {
@@ -26,6 +31,10 @@ export class ChatAgent {
     const world = await this.client.getWorld();
     const botUsername = world.status.username ?? this.config.botId;
     const botNames = createBotNames(this.config.botId, botUsername, this.config.aliases);
+
+    if (await this.config.safety?.handle(world)) {
+      return;
+    }
 
     for (const chat of sortChat(world.recentChat)) {
       if (isOwnChat(chat.username, botNames)) {

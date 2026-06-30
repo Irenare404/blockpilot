@@ -4,6 +4,7 @@ import { GatewayClient } from "./gateway-client.js";
 import { LlmPlanner } from "./llm-planner.js";
 import type { AgentPlanner } from "./planner.js";
 import { RulePlanner } from "./rule-planner.js";
+import { SafetyReflex } from "./safety-reflex.js";
 
 type PlannerKind = "llm" | "rule";
 
@@ -15,6 +16,11 @@ interface AgentConfig {
   plannerKind: PlannerKind;
   aliases: string[];
   allowedActionNames: string[];
+  safetyReflex: {
+    enabled: boolean;
+    cooldownMs: number;
+    noticeCooldownMs: number;
+  };
   llm?: {
     baseUrl: string;
     apiKey: string;
@@ -27,11 +33,18 @@ interface AgentConfig {
 const config = readConfig();
 const client = new GatewayClient(config.gatewayHttpUrl, config.botId);
 const planner = createPlanner(config);
+const safety = new SafetyReflex(client, {
+  enabled: config.safetyReflex.enabled,
+  cooldownMs: config.safetyReflex.cooldownMs,
+  noticeCooldownMs: config.safetyReflex.noticeCooldownMs,
+  allowedActionNames: config.allowedActionNames,
+});
 const agent = new ChatAgent(client, planner, {
   botId: config.botId,
   commandPrefix: config.commandPrefix,
   aliases: config.aliases,
   allowedActionNames: config.allowedActionNames,
+  safety,
 });
 
 let shuttingDown = false;
@@ -50,6 +63,7 @@ console.log(`[agent-runtime] planner: ${config.plannerKind}`);
 console.log(`[agent-runtime] command prefix: ${config.commandPrefix}`);
 console.log(`[agent-runtime] aliases: ${config.aliases.join(", ") || "none"}`);
 console.log(`[agent-runtime] allowed actions: ${config.allowedActionNames.join(", ")}`);
+console.log(`[agent-runtime] safety reflex: ${config.safetyReflex.enabled ? "enabled" : "disabled"}`);
 
 while (!shuttingDown) {
   try {
@@ -86,8 +100,13 @@ function readConfig(): AgentConfig {
     aliases: readCsv(process.env.BLOCKPILOT_AGENT_ALIASES),
     allowedActionNames: readCsv(
       process.env.BLOCKPILOT_AGENT_ALLOWED_ACTIONS,
-      "chat,follow_player,stop,report_position,world_snapshot",
+      "chat,follow_player,stop,report_position,world_snapshot,eat_food,retreat_from_threat",
     ),
+    safetyReflex: {
+      enabled: readBoolean(process.env.BLOCKPILOT_SAFETY_REFLEX, true),
+      cooldownMs: readInteger(process.env.BLOCKPILOT_SAFETY_COOLDOWN_MS, 5_000),
+      noticeCooldownMs: readInteger(process.env.BLOCKPILOT_SAFETY_NOTICE_COOLDOWN_MS, 15_000),
+    },
   };
 
   if (plannerKind === "llm") {
@@ -151,6 +170,23 @@ function readNumber(value: string | undefined, fallback: number): number {
 
   const parsed = Number.parseFloat(value);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function readBoolean(value: string | undefined, fallback: boolean): boolean {
+  if (!value) {
+    return fallback;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) {
+    return true;
+  }
+
+  if (["0", "false", "no", "off"].includes(normalized)) {
+    return false;
+  }
+
+  return fallback;
 }
 
 function sleep(ms: number): Promise<void> {

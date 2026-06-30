@@ -69,7 +69,7 @@ Plugins receive a controlled context:
 
 ## Current Plugins
 
-- `blockpilot.core-actions`: `chat`, `follow_player`, `stop`
+- `blockpilot.core-actions`: `chat`, `eat_food`, `follow_player`, `retreat_from_threat`, `stop`
 - `blockpilot.chat-intents`: in-game follow and stop commands
 - `blockpilot.report-position`: `report_position`
 - `blockpilot.world-snapshot`: `world_snapshot`

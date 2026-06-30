@@ -51,8 +51,10 @@ Current gateway endpoints:
 Current actions:
 
 - `chat`
+- `eat_food`
 - `follow_player`
 - `report_position`
+- `retreat_from_threat`
 - `stop`
 - `world_snapshot`
 
@@ -81,14 +83,15 @@ Task snapshots are published for every action invocation. Short actions usually 
 
 ### Agent Runtime
 
-The agent runtime is a process outside the worker. It consumes the gateway API, reads world snapshots, watches recent chat, and invokes actions through `POST /bots/:botId/actions`.
+The agent runtime is a process outside the worker. It consumes the gateway API, reads world snapshots, runs safety reflexes, watches recent chat, and invokes actions through `POST /bots/:botId/actions`.
 
 The agent runtime hosts a swappable planner. The first planner is rule-based and intentionally small:
 
 - Poll `GET /bots/:botId/world`.
+- Run local safety reflexes before planner work.
 - Detect in-game commands with the `!bp` prefix.
 - Use the world snapshot capability list before calling optional tools.
-- Call `chat`, `report_position`, `follow_player`, and `stop` through the gateway.
+- Call `chat`, `eat_food`, `retreat_from_threat`, `report_position`, `follow_player`, and `stop` through the gateway.
 
 The LLM planner keeps the same boundary but replaces command parsing with model planning:
 
@@ -99,6 +102,8 @@ The LLM planner keeps the same boundary but replaces command parsing with model 
 - The agent runtime applies an action whitelist and the live capability registry before forwarding any action to the gateway.
 
 This keeps natural language understanding outside the worker while making the model aware of its own player name and preventing it from reacting to messages meant for other players.
+
+Safety reflexes are deliberately narrower than planning. They can eat available food, retreat from reachable immediate threats, or stop unsafe controls. They do not attack by default, and they skip threats marked as trapped so mob farms and spawner setups are not treated as combat targets.
 
 ### Capability Runtime
 
