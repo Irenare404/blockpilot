@@ -51,6 +51,11 @@ Current actions:
 - `follow_player`
 - `stop`
 
+Current built-in chat intents:
+
+- follow the speaking player
+- stop current movement
+
 ### Capability Runtime
 
 Capabilities may be built in or loaded as plugins. The agent should see a unified tool registry regardless of where a capability comes from.

@@ -33,6 +33,16 @@ type PathfinderBot = Bot & {
   pathfinder: PathfinderController;
 };
 
+type ChatIntent =
+  | {
+      name: "follow_player";
+      playerName: string;
+      distance: number;
+    }
+  | {
+      name: "stop";
+    };
+
 interface WorkerConfig {
   botId: string;
   gatewayUrl: string;
@@ -146,6 +156,8 @@ function connectMinecraft(): void {
       username,
       message,
     });
+
+    void handleChatIntent(username, message);
   });
 
   bot.on("health", () => {
@@ -269,6 +281,98 @@ async function followPlayer(activeBot: Bot, playerName: string, distance = 2): P
       distance: followDistance,
     },
   };
+}
+
+async function handleChatIntent(username: string, message: string): Promise<void> {
+  const intent = parseChatIntent(username, message);
+  if (!intent) {
+    return;
+  }
+
+  const activeBot = requireBot();
+
+  try {
+    if (intent.name === "follow_player") {
+      const result = await followPlayer(activeBot, intent.playerName, intent.distance);
+      activeBot.chat(result.message ?? `Following ${intent.playerName}`);
+      return;
+    }
+
+    stopCurrentControls(activeBot, `Chat stop command from '${username}'`);
+    activeBot.chat("Stopped.");
+  } catch (error) {
+    const errorMessage = asErrorMessage(error);
+    publishEvent("intent.error", errorMessage, {
+      username,
+      message,
+    });
+    activeBot.chat(errorMessage);
+  }
+}
+
+function parseChatIntent(username: string, message: string): ChatIntent | undefined {
+  const normalized = normalizeChatMessage(message);
+  if (!normalized) {
+    return undefined;
+  }
+
+  if (isStopIntent(normalized)) {
+    return {
+      name: "stop",
+    };
+  }
+
+  if (isFollowIntent(normalized)) {
+    return {
+      name: "follow_player",
+      playerName: username,
+      distance: 2,
+    };
+  }
+
+  return undefined;
+}
+
+function isFollowIntent(normalized: string): boolean {
+  const directCommands = new Set([
+    "come",
+    "come here",
+    "follow",
+    "follow me",
+    "过来",
+    "来",
+    "来我这",
+    "来我这里",
+    "跟我",
+    "跟着我",
+    "跟随我",
+  ]);
+
+  if (directCommands.has(normalized)) {
+    return true;
+  }
+
+  return isAddressedToBot(normalized) && /(?:come here|follow me|过来|来我这|来我这里|跟我|跟着我|跟随我)/u.test(normalized);
+}
+
+function isStopIntent(normalized: string): boolean {
+  const directCommands = new Set(["stop", "cancel", "停止", "停下", "别跟了", "别跟着我"]);
+
+  if (directCommands.has(normalized)) {
+    return true;
+  }
+
+  return isAddressedToBot(normalized) && /(?:stop|cancel|停止|停下|别跟了|别跟着我)/u.test(normalized);
+}
+
+function isAddressedToBot(normalized: string): boolean {
+  const botName = config.username.toLowerCase();
+  const botId = config.botId.toLowerCase();
+  return normalized.includes(botName) || normalized.includes(botId) || normalized.startsWith("bot ") || normalized.startsWith("bp ");
+}
+
+function normalizeChatMessage(message: string): string {
+  return message.trim().toLowerCase().replace(/[，。！？!?,.]/gu, "").replace(/\s+/gu, " ");
 }
 
 function configurePathfinder(activeBot: PathfinderBot): void {

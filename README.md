@@ -26,6 +26,7 @@ It supports:
 - Worker registration through WebSocket.
 - Event streaming for bot status and Minecraft chat events.
 - Three controlled actions: `chat`, `follow_player`, and `stop`.
+- A small built-in chat intent layer for follow and stop commands.
 
 ## Direction
 
@@ -129,6 +130,29 @@ curl -X POST http://127.0.0.1:8787/bots/BlockPilot/actions ^
 ```
 
 `follow_player` requires the target player to be visible to the bot.
+
+### In-Game Chat Intents
+
+The bot can react to a few direct chat commands from visible players:
+
+```text
+过来
+跟着我
+跟随我
+come
+follow me
+```
+
+Stop commands:
+
+```text
+停止
+停下
+stop
+cancel
+```
+
+Longer messages should address the bot by name, for example `BlockPilot 过来`.
 
 ## First Milestone
 
