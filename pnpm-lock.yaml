@@ -21,6 +21,12 @@ importers:
         specifier: ^6.0.3
         version: 6.0.3
 
+  apps/agent-runtime:
+    dependencies:
+      '@blockpilot/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+
   apps/bot-worker:
     dependencies:
       '@blockpilot/core':

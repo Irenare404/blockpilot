@@ -11,6 +11,29 @@ type ChatIntent =
       name: "stop";
     };
 
+const FOLLOW_COMMANDS = [
+  "come",
+  "come here",
+  "follow",
+  "follow me",
+  "\u8FC7\u6765",
+  "\u6765",
+  "\u6765\u6211\u8FD9",
+  "\u6765\u6211\u8FD9\u91CC",
+  "\u8DDF\u6211",
+  "\u8DDF\u7740\u6211",
+  "\u8DDF\u968F\u6211",
+];
+
+const STOP_COMMANDS = [
+  "stop",
+  "cancel",
+  "\u505C\u6B62",
+  "\u505C\u4E0B",
+  "\u522B\u8DDF\u4E86",
+  "\u522B\u8DDF\u7740\u6211",
+];
+
 export const chatIntentsPlugin: WorkerPlugin = {
   id: "blockpilot.chat-intents",
   name: "Chat Intents",
@@ -77,35 +100,19 @@ function parseChatIntent(config: WorkerPluginConfig, event: ChatEvent): ChatInte
 }
 
 function isFollowIntent(config: WorkerPluginConfig, normalized: string): boolean {
-  const directCommands = new Set([
-    "come",
-    "come here",
-    "follow",
-    "follow me",
-    "过来",
-    "来",
-    "来我这",
-    "来我这里",
-    "跟我",
-    "跟着我",
-    "跟随我",
-  ]);
-
-  if (directCommands.has(normalized)) {
+  if (FOLLOW_COMMANDS.includes(normalized)) {
     return true;
   }
 
-  return isAddressedToBot(config, normalized) && /(?:come here|follow me|过来|来我这|来我这里|跟我|跟着我|跟随我)/u.test(normalized);
+  return isAddressedToBot(config, normalized) && containsAny(normalized, FOLLOW_COMMANDS);
 }
 
 function isStopIntent(config: WorkerPluginConfig, normalized: string): boolean {
-  const directCommands = new Set(["stop", "cancel", "停止", "停下", "别跟了", "别跟着我"]);
-
-  if (directCommands.has(normalized)) {
+  if (STOP_COMMANDS.includes(normalized)) {
     return true;
   }
 
-  return isAddressedToBot(config, normalized) && /(?:stop|cancel|停止|停下|别跟了|别跟着我)/u.test(normalized);
+  return isAddressedToBot(config, normalized) && containsAny(normalized, STOP_COMMANDS);
 }
 
 function isAddressedToBot(config: WorkerPluginConfig, normalized: string): boolean {
@@ -114,6 +121,10 @@ function isAddressedToBot(config: WorkerPluginConfig, normalized: string): boole
   return normalized.includes(botName) || normalized.includes(botId) || normalized.startsWith("bot ") || normalized.startsWith("bp ");
 }
 
+function containsAny(input: string, options: string[]): boolean {
+  return options.some((option) => input.includes(option));
+}
+
 function normalizeChatMessage(message: string): string {
-  return message.trim().toLowerCase().replace(/[，。！？!?,.]/gu, "").replace(/\s+/gu, " ");
+  return message.trim().toLowerCase().replace(/[\uFF0C\u3002\uFF01\uFF1F,.!?]/gu, "").replace(/\s+/gu, " ");
 }

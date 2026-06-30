@@ -9,7 +9,9 @@
     },
     {
       "path": "./apps/bot-worker"
+    },
+    {
+      "path": "./apps/agent-runtime"
     }
   ]
 }
-

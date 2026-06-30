@@ -11,6 +11,7 @@
     "build": "tsc -b",
     "check": "tsc -b --pretty false",
     "clean": "git clean -fdX",
+    "dev:agent": "pnpm --filter @blockpilot/core build && pnpm --filter @blockpilot/agent-runtime dev",
     "dev:gateway": "pnpm --filter @blockpilot/core build && pnpm --filter @blockpilot/gateway dev",
     "dev:bot": "pnpm --filter @blockpilot/core build && pnpm --filter @blockpilot/bot-worker dev"
   },
