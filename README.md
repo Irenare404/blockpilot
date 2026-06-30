@@ -191,11 +191,15 @@ Environment variables:
 - `BLOCKPILOT_AGENT_ALIASES`: comma-separated names players may use for the bot, such as `bp,helper`.
 - `BLOCKPILOT_AGENT_ALLOWED_ACTIONS`: comma-separated action whitelist. Defaults to `chat,follow_player,stop,report_position,world_snapshot,eat_food,retreat_from_threat`.
 - `BLOCKPILOT_AGENT_TICK_MS`: polling interval. Defaults to `2000`.
+- `BLOCKPILOT_RESPONSE_DEDUP_MS`: suppress identical bot chat replies within this window. Defaults to `30000`.
 - `BLOCKPILOT_SAFETY_REFLEX`: enable local safety reflexes. Defaults to `true`.
 - `BLOCKPILOT_SAFETY_COOLDOWN_MS`: minimum delay between safety actions. Defaults to `5000`.
+- `BLOCKPILOT_SAFETY_NOTICE`: send chat notices for safety reflexes. Defaults to `false`.
 - `BLOCKPILOT_SAFETY_NOTICE_COOLDOWN_MS`: minimum delay between safety chat notices. Defaults to `15000`.
 
-Safety reflexes run before the rule or LLM planner. When the bot is hungry or hurt it can call `eat_food`; when a reachable immediate threat is detected it can call `retreat_from_threat`. The reflex skips threats marked as trapped, such as likely mob-farm entities.
+Safety reflexes run before the rule or LLM planner. When the bot is hungry or hurt it can call `eat_food`; when a reachable immediate threat is detected it can call `retreat_from_threat`. The reflex skips threats marked as trapped, such as likely mob-farm entities. Safety reflex chat notices are off by default so the bot does not spam mechanical status lines while acting.
+
+The agent handles only the newest unprocessed player chat message each tick. Older queued chat is marked handled to avoid delayed duplicate-looking replies after safety reflexes or slow LLM calls.
 
 The LLM planner receives the bot id, live Minecraft username, configured aliases, current speaker, recent chat, nearby players, current task, perception data, safety state, and available capabilities. The model must first return `addressedToBot`; if the message is for another player or general server chat, the agent ignores it.
 

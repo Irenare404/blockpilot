@@ -4,6 +4,7 @@ import type { GatewayClient } from "./gateway-client.js";
 export interface SafetyReflexConfig {
   enabled: boolean;
   cooldownMs: number;
+  noticeEnabled: boolean;
   noticeCooldownMs: number;
   allowedActionNames: string[];
 }
@@ -62,7 +63,12 @@ export class SafetyReflex {
     this.lastActionAt = now;
     await this.client.runAction(reaction.action);
 
-    if (reaction.notice && this.canRun(world, "chat") && now - this.lastNoticeAt >= this.config.noticeCooldownMs) {
+    if (
+      this.config.noticeEnabled &&
+      reaction.notice &&
+      this.canRun(world, "chat") &&
+      now - this.lastNoticeAt >= this.config.noticeCooldownMs
+    ) {
       this.lastNoticeAt = now;
       await this.client.chat(reaction.notice);
     }
@@ -79,7 +85,7 @@ export class SafetyReflex {
             reason: "Safety reflex: health or food is low",
           },
         },
-        notice: "I need a second to eat.",
+        notice: "\u6211\u5148\u5403\u70B9\u4E1C\u897F\u3002",
       };
     }
 
@@ -87,7 +93,7 @@ export class SafetyReflex {
     if (immediateThreat && this.canRun(world, "retreat_from_threat")) {
       return {
         action: createRetreatAction(immediateThreat),
-        notice: `I am backing away from ${immediateThreat.name}.`,
+        notice: "\u6211\u5148\u8EB2\u5F00\u5371\u9669\u3002",
       };
     }
 
@@ -99,7 +105,7 @@ export class SafetyReflex {
             reason: `Safety reflex: ${world.safety.reasons[0] ?? "danger detected"}`,
           },
         },
-        notice: "I stopped because something looks unsafe.",
+        notice: "\u6211\u5148\u505C\u4E00\u4E0B\uFF0C\u9644\u8FD1\u4E0D\u592A\u5B89\u5168\u3002",
       };
     }
 

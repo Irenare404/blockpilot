@@ -16,9 +16,11 @@ interface AgentConfig {
   plannerKind: PlannerKind;
   aliases: string[];
   allowedActionNames: string[];
+  responseDedupMs: number;
   safetyReflex: {
     enabled: boolean;
     cooldownMs: number;
+    noticeEnabled: boolean;
     noticeCooldownMs: number;
   };
   llm?: {
@@ -36,6 +38,7 @@ const planner = createPlanner(config);
 const safety = new SafetyReflex(client, {
   enabled: config.safetyReflex.enabled,
   cooldownMs: config.safetyReflex.cooldownMs,
+  noticeEnabled: config.safetyReflex.noticeEnabled,
   noticeCooldownMs: config.safetyReflex.noticeCooldownMs,
   allowedActionNames: config.allowedActionNames,
 });
@@ -44,6 +47,7 @@ const agent = new ChatAgent(client, planner, {
   commandPrefix: config.commandPrefix,
   aliases: config.aliases,
   allowedActionNames: config.allowedActionNames,
+  responseDedupMs: config.responseDedupMs,
   safety,
 });
 
@@ -102,9 +106,11 @@ function readConfig(): AgentConfig {
       process.env.BLOCKPILOT_AGENT_ALLOWED_ACTIONS,
       "chat,follow_player,stop,report_position,world_snapshot,eat_food,retreat_from_threat",
     ),
+    responseDedupMs: readInteger(process.env.BLOCKPILOT_RESPONSE_DEDUP_MS, 30_000),
     safetyReflex: {
       enabled: readBoolean(process.env.BLOCKPILOT_SAFETY_REFLEX, true),
       cooldownMs: readInteger(process.env.BLOCKPILOT_SAFETY_COOLDOWN_MS, 5_000),
+      noticeEnabled: readBoolean(process.env.BLOCKPILOT_SAFETY_NOTICE, false),
       noticeCooldownMs: readInteger(process.env.BLOCKPILOT_SAFETY_NOTICE_COOLDOWN_MS, 15_000),
     },
   };
