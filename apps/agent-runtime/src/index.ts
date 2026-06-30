@@ -2,6 +2,7 @@ import { asErrorMessage } from "@blockpilot/core";
 import { loadDotEnv } from "@blockpilot/node-env";
 import { AutonomyLoop } from "./autonomy.js";
 import { ChatAgent } from "./chat-agent.js";
+import { createDefaultDecisionLogPath, DecisionLogger, readDecisionLogMode, type DecisionLogMode } from "./decision-log.js";
 import { GatewayClient } from "./gateway-client.js";
 import { LlmPlanner } from "./llm-planner.js";
 import { createDefaultMemoryPath, MemoryStore, readAutonomyMode, type AutonomyMode } from "./memory-store.js";
@@ -22,6 +23,10 @@ interface AgentConfig {
   aliases: string[];
   allowedActionNames: string[];
   responseDedupMs: number;
+  decisionLog: {
+    mode: DecisionLogMode;
+    filePath: string;
+  };
   memoryFilePath: string;
   autonomy: {
     enabled: boolean;
@@ -47,6 +52,7 @@ interface AgentConfig {
 const config = readConfig();
 const client = new GatewayClient(config.gatewayHttpUrl, config.botId);
 const planner = createPlanner(config);
+const decisionLogger = new DecisionLogger(config.decisionLog);
 const memory = new MemoryStore(config.memoryFilePath, config.botId, config.autonomy.mode);
 await memory.load();
 const safety = new SafetyReflex(client, {
@@ -72,6 +78,7 @@ const agent = new ChatAgent(client, planner, {
   memory,
   safety,
   autonomy,
+  decisionLogger,
 });
 
 let shuttingDown = false;
@@ -95,12 +102,17 @@ console.log(`[agent-runtime] memory: ${config.memoryFilePath}`);
 console.log(
   `[agent-runtime] autonomy: ${config.autonomy.enabled ? "enabled" : "disabled"} (${config.autonomy.mode}, interval ${config.autonomy.intervalMs}ms)`,
 );
+console.log(
+  `[agent-runtime] decision log: ${config.decisionLog.mode}${config.decisionLog.mode === "file" || config.decisionLog.mode === "both" ? ` (${config.decisionLog.filePath})` : ""}`,
+);
 
 while (!shuttingDown) {
   try {
     await agent.tick();
   } catch (error) {
-    console.warn(`[agent-runtime] tick failed: ${asErrorMessage(error)}`);
+    const message = asErrorMessage(error);
+    decisionLogger.log("tick.error", { error: message });
+    console.warn(`[agent-runtime] tick failed: ${message}`);
   }
 
   await sleep(config.tickIntervalMs);
@@ -133,9 +145,13 @@ function readConfig(): AgentConfig {
     aliases: readCsv(process.env.BLOCKPILOT_AGENT_ALIASES),
     allowedActionNames: readCsv(
       process.env.BLOCKPILOT_AGENT_ALLOWED_ACTIONS,
-      "chat,follow_player,go_to_position,stop,report_position,world_snapshot,eat_food,retreat_from_threat",
+      "chat,follow_player,go_to_position,dig_nearest_block,stop,report_position,world_snapshot,eat_food,retreat_from_threat",
     ),
     responseDedupMs: readInteger(process.env.BLOCKPILOT_RESPONSE_DEDUP_MS, 30_000),
+    decisionLog: {
+      mode: readDecisionLogMode(process.env.BLOCKPILOT_AGENT_DECISION_LOG, "off"),
+      filePath: readNonEmptyString(process.env.BLOCKPILOT_AGENT_DECISION_LOG_FILE, createDefaultDecisionLogPath(botId)),
+    },
     memoryFilePath: readNonEmptyString(process.env.BLOCKPILOT_MEMORY_FILE, createDefaultMemoryPath(botId)),
     autonomy: {
       enabled: readBoolean(process.env.BLOCKPILOT_AUTONOMY, false),

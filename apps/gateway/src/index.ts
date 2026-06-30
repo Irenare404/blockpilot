@@ -225,7 +225,7 @@ async function handleHttpRequest(request: IncomingMessage, response: ServerRespo
     if (!action) {
       sendJson(response, 400, {
         error:
-          "Invalid action. Use {\"name\":\"chat\",\"args\":{\"message\":\"hello\"}}, {\"name\":\"follow_player\",\"args\":{\"playerName\":\"Steve\"}}, or {\"name\":\"stop\"}.",
+          "Invalid action. Use {\"name\":\"chat\",\"args\":{\"message\":\"hello\"}}, {\"name\":\"follow_player\",\"args\":{\"playerName\":\"Steve\"}}, {\"name\":\"dig_nearest_block\",\"args\":{\"blockName\":\"dirt\"}}, or {\"name\":\"stop\"}.",
       });
       return;
     }

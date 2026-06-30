@@ -7,6 +7,11 @@ type AgentCommand =
       chat: ChatMessageSnapshot;
     }
   | {
+      name: "dig";
+      chat: ChatMessageSnapshot;
+      blockName: string;
+    }
+  | {
       name: "go_home" | "help" | "home" | "memory" | "set_home" | "status" | "stop" | "where" | "world";
       chat: ChatMessageSnapshot;
     };
@@ -100,6 +105,11 @@ function parseCommand(chat: ChatMessageSnapshot, commandPrefix: string): AgentCo
     return { name: "go_home", chat };
   }
 
+  const digBlockName = parseDigBlockName(command);
+  if (digBlockName) {
+    return { name: "dig", chat, blockName: digBlockName };
+  }
+
   if (FOLLOW_ALIASES.has(command)) {
     return { name: "follow", chat };
   }
@@ -140,6 +150,8 @@ function executeCommand(command: AgentCommand, context: PlannerContext): AgentPl
       ]);
     case "go_home":
       return createGoHomePlan(context);
+    case "dig":
+      return createDigPlan(command, context);
     case "follow":
       return addressedPlan([
         {
@@ -178,7 +190,7 @@ function addressedPlan(steps: AgentPlan["steps"]): AgentPlan {
 
 function createHelpMessage(capabilities: BotCapability[], prefix: string): string {
   const names = capabilities.map((capability) => capability.name).sort().join(", ");
-  return `Agent commands: ${prefix} help/status/where/world/follow/stop/home/sethome/go home/memory. Tools: ${names || "none"}.`;
+  return `Agent commands: ${prefix} help/status/where/world/follow/stop/home/sethome/go home/memory/dig dirt. Tools: ${names || "none"}.`;
 }
 
 function createPositionMessage(world: WorldSnapshot): string {
@@ -269,6 +281,27 @@ function createGoHomePlan(context: PlannerContext): AgentPlan {
   ]);
 }
 
+function createDigPlan(command: Extract<AgentCommand, { name: "dig" }>, context: PlannerContext): AgentPlan {
+  if (!hasCapability(context.world.capabilities, "dig_nearest_block")) {
+    return addressedPlan([{ type: "say", message: "I understood the dig request, but dig_nearest_block is unavailable." }]);
+  }
+
+  return addressedPlan([
+    { type: "say", message: `Digging nearby ${command.blockName}.` },
+    {
+      type: "action",
+      action: {
+        name: "dig_nearest_block",
+        args: {
+          blockName: command.blockName,
+          maxDistance: 6,
+          count: 1,
+        },
+      },
+    },
+  ]);
+}
+
 function formatPosition(position: { x: number; y: number; z: number }): string {
   return `${position.x}, ${position.y}, ${position.z}`;
 }
@@ -287,4 +320,37 @@ function normalizeCommand(message: string): string {
 
 function normalizeSpacing(message: string): string {
   return message.trim().toLowerCase().replace(/\s+/gu, " ");
+}
+
+function parseDigBlockName(command: string): string | undefined {
+  for (const prefix of ["dig ", "mine ", "\u6316 "]) {
+    if (!command.startsWith(prefix)) {
+      continue;
+    }
+
+    return normalizeRequestedBlockName(command.slice(prefix.length), true);
+  }
+
+  return normalizeRequestedBlockName(command, false);
+}
+
+function normalizeRequestedBlockName(value: string, allowUnknown: boolean): string | undefined {
+  const normalized = normalizeSpacing(value).replace(/^minecraft:/u, "").replace(/\s+/gu, "_");
+  switch (normalized) {
+    case "\u6316\u6CE5\u571F":
+    case "\u6316\u571F":
+    case "\u6CE5\u571F":
+    case "\u571F":
+    case "dirt":
+      return "dirt,grass_block";
+    case "\u8349\u65B9\u5757":
+    case "grass":
+    case "grass_block":
+      return "grass_block,dirt";
+    case "\u77F3\u5934":
+    case "stone":
+      return "stone";
+    default:
+      return allowUnknown && normalized ? normalized : undefined;
+  }
 }

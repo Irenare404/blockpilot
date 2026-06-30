@@ -63,7 +63,16 @@ export interface GoToPositionAction {
   };
 }
 
-export type BuiltInBotAction = ChatAction | StopAction | FollowPlayerAction | GoToPositionAction;
+export interface DigNearestBlockAction {
+  name: "dig_nearest_block";
+  args: {
+    blockName: string;
+    maxDistance?: number;
+    count?: number;
+  };
+}
+
+export type BuiltInBotAction = ChatAction | StopAction | FollowPlayerAction | GoToPositionAction | DigNearestBlockAction;
 
 export interface BotCapabilityParameterSchema {
   type: "string" | "number" | "boolean";

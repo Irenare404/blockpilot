@@ -111,6 +111,7 @@ function createSystemPrompt(context: PlannerContext): string {
     "Use world entities, blocks, self, and safety to reason about the world before choosing actions.",
     "Use memory.home, memory.places, memory.players, and memory.recentObservations as long-term context.",
     "When a player asks you to go home or return to base, use memory.home and the go_to_position action if available.",
+    "When a player asks you to dig or mine a nearby block, use dig_nearest_block if available. For Chinese dirt requests like '\u6316\u6CE5\u571F' or '\u6316\u571F', use blockName='dirt,grass_block'.",
     "Only use memory operation set_home when the player explicitly asks you to remember the current place as home/base.",
     "Do not treat every monster as an attack target. Mobs marked trapped or near spawners may be part of a farm and can be harmless.",
     "Prioritize self-preservation when safety.dangerLevel is danger or critical.",

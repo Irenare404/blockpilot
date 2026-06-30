@@ -5,6 +5,9 @@ import {
   requireStringArg,
   type WorkerPlugin,
 } from "../plugin-runtime.js";
+import type { Bot } from "mineflayer";
+
+type MineflayerBlock = NonNullable<ReturnType<Bot["blockAt"]>>;
 
 const FOOD_ITEM_NAMES = [
   "cooked_beef",
@@ -131,6 +134,71 @@ export const coreActionsPlugin: WorkerPlugin = {
         const z = requireNumberArg(action, "z");
         const range = getOptionalNumberArg(action, "range");
         return ctx.minecraft.goToPosition(x, y, z, range);
+      },
+    );
+
+    ctx.actions.register(
+      {
+        name: "dig_nearest_block",
+        description: "Dig nearby blocks matching a Minecraft block name, such as dirt or grass_block.",
+        source: "builtin",
+        parameters: {
+          type: "object",
+          properties: {
+            blockName: {
+              type: "string",
+              description: "Minecraft block name or comma-separated names, such as dirt,grass_block.",
+            },
+            maxDistance: {
+              type: "number",
+              description: "Maximum search distance in blocks.",
+              default: 6,
+              minimum: 1,
+              maximum: 32,
+            },
+            count: {
+              type: "number",
+              description: "Maximum number of matching blocks to dig.",
+              default: 1,
+              minimum: 1,
+              maximum: 16,
+            },
+          },
+          required: ["blockName"],
+          additionalProperties: false,
+        },
+      },
+      async (action) => {
+        const bot = ctx.minecraft.requireBot();
+        const blockNames = parseBlockNames(requireStringArg(action, "blockName"));
+        const maxDistance = clamp(getOptionalNumberArg(action, "maxDistance") ?? 6, 1, 32);
+        const count = Math.floor(clamp(getOptionalNumberArg(action, "count") ?? 1, 1, 16));
+        const dug: string[] = [];
+
+        ctx.minecraft.stopCurrentControls(`Digging ${[...blockNames].join(",")}`);
+
+        for (let index = 0; index < count; index += 1) {
+          const block = findNearestDiggableBlock(bot, blockNames, maxDistance);
+          if (!block) {
+            break;
+          }
+
+          await bot.dig(block);
+          dug.push(block.name);
+        }
+
+        if (dug.length === 0) {
+          throw new Error(`No diggable block found for '${[...blockNames].join(",")}' within ${maxDistance} blocks`);
+        }
+
+        return {
+          ok: true,
+          message: `Dug ${dug.length} block(s): ${dug.join(", ")}`,
+          data: {
+            count: dug.length,
+            blockName: [...blockNames].join(","),
+          },
+        };
       },
     );
 
@@ -296,6 +364,54 @@ function requireNumberArg(action: Parameters<typeof getArgs>[0], key: string): n
   }
 
   return value;
+}
+
+function parseBlockNames(value: string): Set<string> {
+  const names = value
+    .split(",")
+    .map((item) => normalizeBlockName(item))
+    .filter(Boolean);
+
+  if (names.length === 0) {
+    throw new Error("dig_nearest_block requires at least one block name");
+  }
+
+  return new Set(names.flatMap((name) => expandBlockName(name)));
+}
+
+function normalizeBlockName(value: string): string {
+  return value.trim().toLowerCase().replace(/^minecraft:/u, "").replace(/\s+/gu, "_");
+}
+
+function expandBlockName(name: string): string[] {
+  switch (name) {
+    case "dirt":
+      return ["dirt", "grass_block", "coarse_dirt", "rooted_dirt", "podzol"];
+    case "stone":
+      return ["stone", "cobblestone", "deepslate"];
+    case "wood":
+    case "log":
+      return ["oak_log", "spruce_log", "birch_log", "jungle_log", "acacia_log", "dark_oak_log", "mangrove_log", "cherry_log"];
+    default:
+      return [name];
+  }
+}
+
+function findNearestDiggableBlock(bot: Bot, names: Set<string>, maxDistance: number): MineflayerBlock | undefined {
+  const positions = bot.findBlocks({
+    point: bot.entity.position,
+    matching: (block) => names.has(block.name),
+    maxDistance,
+    count: 64,
+  });
+
+  const blocks = positions
+    .map((position) => bot.blockAt(position))
+    .filter((block): block is MineflayerBlock => Boolean(block))
+    .filter((block) => bot.canDigBlock(block))
+    .sort((a, b) => a.position.distanceTo(bot.entity.position) - b.position.distanceTo(bot.entity.position));
+
+  return blocks[0];
 }
 
 function clamp(value: number, min: number, max: number): number {
