@@ -12,6 +12,7 @@ import {
   type BotAction,
   type BotCapability,
   type BotStatus,
+  type BotTaskSnapshot,
   type GatewayCommandMessage,
   type WorldSnapshot,
   type WorkerResultMessage,
@@ -30,6 +31,8 @@ interface WorkerSession {
   status: BotStatus;
   capabilities: BotCapability[];
   world?: WorldSnapshot;
+  currentTask?: BotTaskSnapshot;
+  tasks: Map<string, BotTaskSnapshot>;
   pending: Map<string, PendingCommand>;
 }
 
@@ -179,6 +182,24 @@ async function handleHttpRequest(request: IncomingMessage, response: ServerRespo
     return;
   }
 
+  const tasksMatch = /^\/bots\/([^/]+)\/tasks$/.exec(url.pathname);
+  if (request.method === "GET" && tasksMatch?.[1]) {
+    const botId = decodeURIComponent(tasksMatch[1]);
+    const session = workerSessions.get(botId);
+
+    if (!session) {
+      sendJson(response, 404, { error: `Unknown bot '${botId}'` });
+      return;
+    }
+
+    sendJson(response, 200, {
+      botId,
+      currentTask: session.currentTask,
+      recentTasks: getRecentTasks(session),
+    });
+    return;
+  }
+
   const worldMatch = /^\/bots\/([^/]+)\/world$/.exec(url.pathname);
   if (request.method === "GET" && worldMatch?.[1]) {
     const botId = decodeURIComponent(worldMatch[1]);
@@ -240,6 +261,7 @@ function handleWorkerMessage(socket: WebSocket, data: RawData): void {
       socket,
       pending: new Map(),
       capabilities: parsed.capabilities ?? [],
+      tasks: new Map(),
       status: {
         botId: parsed.botId,
         state: "online",
@@ -279,10 +301,21 @@ function handleWorkerMessage(socket: WebSocket, data: RawData): void {
 
   if (parsed.type === "worker.world") {
     session.world = parsed.snapshot;
+    syncTasksFromWorld(session, parsed.snapshot);
     workerSessions.set(session.botId, session);
     broadcast({
       type: "gateway.world",
       snapshot: parsed.snapshot,
+    });
+    return;
+  }
+
+  if (parsed.type === "worker.task") {
+    rememberTask(session, parsed.task);
+    workerSessions.set(session.botId, session);
+    broadcast({
+      type: "gateway.task",
+      task: parsed.task,
     });
     return;
   }
@@ -308,14 +341,52 @@ function handleWorkerMessage(socket: WebSocket, data: RawData): void {
 }
 
 function createFallbackWorldSnapshot(session: WorkerSession): WorldSnapshot {
-  return {
+  const snapshot: WorldSnapshot = {
     botId: session.botId,
     updatedAt: nowIso(),
     status: session.status,
     capabilities: session.capabilities,
+    recentTasks: getRecentTasks(session),
     nearbyPlayers: [],
     recentChat: [],
   };
+
+  if (session.currentTask) {
+    snapshot.currentTask = session.currentTask;
+  }
+
+  return snapshot;
+}
+
+function rememberTask(session: WorkerSession, task: BotTaskSnapshot): void {
+  session.tasks.set(task.taskId, task);
+
+  if (task.state === "running") {
+    session.currentTask = task;
+    return;
+  }
+
+  if (session.currentTask?.taskId === task.taskId) {
+    delete session.currentTask;
+  }
+}
+
+function syncTasksFromWorld(session: WorkerSession, snapshot: WorldSnapshot): void {
+  for (const task of snapshot.recentTasks) {
+    session.tasks.set(task.taskId, task);
+  }
+
+  if (snapshot.currentTask) {
+    session.currentTask = snapshot.currentTask;
+  } else {
+    delete session.currentTask;
+  }
+}
+
+function getRecentTasks(session: WorkerSession): BotTaskSnapshot[] {
+  return [...session.tasks.values()]
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+    .slice(0, 20);
 }
 
 function dispatchAction(botId: string, action: BotAction): Promise<WorkerResultMessage> {

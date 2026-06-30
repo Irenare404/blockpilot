@@ -94,6 +94,12 @@ Fetch the bot world snapshot:
 curl http://127.0.0.1:8787/bots/local-bot/world
 ```
 
+List current and recent tasks:
+
+```bash
+curl http://127.0.0.1:8787/bots/local-bot/tasks
+```
+
 Send a chat message through the bot:
 
 ```bash
@@ -148,6 +154,10 @@ curl http://127.0.0.1:8787/bots/BlockPilot/actions
 
 ```bat
 curl http://127.0.0.1:8787/bots/BlockPilot/world
+```
+
+```bat
+curl http://127.0.0.1:8787/bots/BlockPilot/tasks
 ```
 
 ```bat

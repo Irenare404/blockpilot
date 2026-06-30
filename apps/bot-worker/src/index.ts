@@ -8,8 +8,11 @@ import {
   safeJsonParse,
   type ActionResult,
   type BlockPilotEvent,
+  type BotAction,
   type BotConnectionState,
   type BotStatus,
+  type BotTaskSnapshot,
+  type BotTaskState,
   type GatewayToWorkerMessage,
   type ChatMessageSnapshot,
   type JsonRecord,
@@ -57,6 +60,8 @@ let lastError: string | undefined;
 let shuttingDown = false;
 let gatewayReconnectTimer: ReturnType<typeof setTimeout> | undefined;
 const recentChat: ChatMessageSnapshot[] = [];
+const recentTasks: BotTaskSnapshot[] = [];
+let currentTask: BotTaskSnapshot | undefined;
 
 const pluginRuntime = new PluginRuntime({
   config: {
@@ -244,15 +249,38 @@ function handleGatewayMessage(data: RawData): void {
 }
 
 async function runCommand(message: Extract<GatewayToWorkerMessage, { type: "gateway.command" }>): Promise<void> {
+  const action = message.action;
+  const previousTask = currentTask;
+
+  if (action.name === "stop" && previousTask?.state === "running") {
+    cancelTask(previousTask, "Stopped by stop action");
+  }
+
+  if (isLongRunningAction(action) && previousTask?.state === "running") {
+    cancelTask(previousTask, `Replaced by '${action.name}'`);
+  }
+
+  const task = startTask(action, isLongRunningAction(action));
+
   try {
-    const result = await pluginRuntime.execute(message.action);
+    const result = await pluginRuntime.execute(action);
+
+    if (isLongRunningAction(action)) {
+      updateTask(task, "running", result.message);
+    } else {
+      finishTask(task, "completed", result.message);
+    }
+
+    const resultWithTask = attachTaskResult(result, task);
+
     sendToGateway({
       type: "worker.result",
       requestId: message.requestId,
       ok: true,
-      result,
+      result: resultWithTask,
     });
   } catch (error) {
+    failTask(task, asErrorMessage(error));
     sendToGateway({
       type: "worker.result",
       requestId: message.requestId,
@@ -260,6 +288,80 @@ async function runCommand(message: Extract<GatewayToWorkerMessage, { type: "gate
       error: asErrorMessage(error),
     });
   }
+}
+
+function isLongRunningAction(action: BotAction): boolean {
+  return action.name === "follow_player";
+}
+
+function startTask(action: BotAction, setAsCurrent: boolean): BotTaskSnapshot {
+  const task: BotTaskSnapshot = {
+    taskId: createId("task"),
+    botId: config.botId,
+    actionName: action.name,
+    state: "running",
+    startedAt: nowIso(),
+    updatedAt: nowIso(),
+  };
+
+  if (action.args) {
+    task.args = action.args;
+  }
+
+  rememberTask(task);
+
+  if (setAsCurrent) {
+    currentTask = task;
+  }
+
+  publishTask(task);
+  return task;
+}
+
+function updateTask(task: BotTaskSnapshot, state: BotTaskState, message?: string): void {
+  task.state = state;
+  task.updatedAt = nowIso();
+
+  if (message) {
+    task.message = message;
+  }
+
+  publishTask(task);
+  publishWorldSnapshot();
+}
+
+function finishTask(task: BotTaskSnapshot, state: Exclude<BotTaskState, "running">, message?: string): void {
+  task.completedAt = nowIso();
+  updateTask(task, state, message);
+
+  if (currentTask?.taskId === task.taskId) {
+    currentTask = undefined;
+    publishWorldSnapshot();
+  }
+}
+
+function failTask(task: BotTaskSnapshot, error: string): void {
+  task.error = error;
+  finishTask(task, "failed", error);
+}
+
+function cancelTask(task: BotTaskSnapshot, message?: string): void {
+  if (task.state !== "running") {
+    return;
+  }
+
+  finishTask(task, "cancelled", message);
+}
+
+function attachTaskResult(result: ActionResult, task: BotTaskSnapshot): ActionResult {
+  return {
+    ...result,
+    data: {
+      ...(result.data ?? {}),
+      taskId: task.taskId,
+      taskState: task.state,
+    },
+  };
 }
 
 async function followPlayer(activeBot: Bot, playerName: string, distance = 2): Promise<ActionResult> {
@@ -353,6 +455,13 @@ function publishWorldSnapshot(): void {
   });
 }
 
+function publishTask(task: BotTaskSnapshot): void {
+  sendToGateway({
+    type: "worker.task",
+    task: cloneTask(task),
+  });
+}
+
 function publishEvent(kind: string, message?: string, payload?: JsonRecord): void {
   const event: BlockPilotEvent = {
     id: createId("evt"),
@@ -376,14 +485,21 @@ function publishEvent(kind: string, message?: string, payload?: JsonRecord): voi
 }
 
 function createWorldSnapshot(): WorldSnapshot {
-  return {
+  const snapshot: WorldSnapshot = {
     botId: config.botId,
     updatedAt: nowIso(),
     status: createStatus(),
     capabilities: pluginRuntime.listCapabilities(),
+    recentTasks: recentTasks.map((task) => cloneTask(task)),
     nearbyPlayers: createNearbyPlayerSnapshots(),
     recentChat: [...recentChat],
   };
+
+  if (currentTask) {
+    snapshot.currentTask = cloneTask(currentTask);
+  }
+
+  return snapshot;
 }
 
 function createNearbyPlayerSnapshots(): WorldSnapshot["nearbyPlayers"] {
@@ -480,6 +596,24 @@ function rememberChat(username: string, message: string): void {
   if (recentChat.length > 20) {
     recentChat.splice(0, recentChat.length - 20);
   }
+}
+
+function rememberTask(task: BotTaskSnapshot): void {
+  recentTasks.push(task);
+
+  if (recentTasks.length > 20) {
+    recentTasks.splice(0, recentTasks.length - 20);
+  }
+}
+
+function cloneTask(task: BotTaskSnapshot): BotTaskSnapshot {
+  const clone: BotTaskSnapshot = { ...task };
+
+  if (task.args) {
+    clone.args = { ...task.args };
+  }
+
+  return clone;
 }
 
 function sendToGateway(message: WorkerToGatewayMessage): void {

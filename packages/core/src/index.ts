@@ -90,11 +90,28 @@ export interface ChatMessageSnapshot {
   receivedAt: string;
 }
 
+export type BotTaskState = "running" | "completed" | "failed" | "cancelled";
+
+export interface BotTaskSnapshot {
+  taskId: string;
+  botId: string;
+  actionName: string;
+  state: BotTaskState;
+  startedAt: string;
+  updatedAt: string;
+  args?: JsonRecord;
+  completedAt?: string;
+  message?: string;
+  error?: string;
+}
+
 export interface WorldSnapshot {
   botId: string;
   updatedAt: string;
   status: BotStatus;
   capabilities: BotCapability[];
+  currentTask?: BotTaskSnapshot;
+  recentTasks: BotTaskSnapshot[];
   nearbyPlayers: NearbyPlayerSnapshot[];
   recentChat: ChatMessageSnapshot[];
 }
@@ -132,6 +149,11 @@ export interface WorkerWorldMessage {
   snapshot: WorldSnapshot;
 }
 
+export interface WorkerTaskMessage {
+  type: "worker.task";
+  task: BotTaskSnapshot;
+}
+
 export interface WorkerEventMessage {
   type: "worker.event";
   event: BlockPilotEvent;
@@ -149,6 +171,7 @@ export type WorkerToGatewayMessage =
   | WorkerHelloMessage
   | WorkerStatusMessage
   | WorkerWorldMessage
+  | WorkerTaskMessage
   | WorkerEventMessage
   | WorkerResultMessage;
 
@@ -198,6 +221,8 @@ export function isWorkerToGatewayMessage(value: unknown): value is WorkerToGatew
       return isRecord(value.status) && typeof value.status.botId === "string";
     case "worker.world":
       return isRecord(value.snapshot) && typeof value.snapshot.botId === "string";
+    case "worker.task":
+      return isRecord(value.task) && typeof value.task.taskId === "string" && typeof value.task.botId === "string";
     case "worker.event":
       return isRecord(value.event) && typeof value.event.botId === "string" && typeof value.event.kind === "string";
     case "worker.result":

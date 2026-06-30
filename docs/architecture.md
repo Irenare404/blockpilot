@@ -42,6 +42,7 @@ Current gateway endpoints:
 - `GET /bots`
 - `GET /bots/:botId/status`
 - `GET /bots/:botId/actions`
+- `GET /bots/:botId/tasks`
 - `GET /bots/:botId/world`
 - `POST /bots/:botId/actions`
 - `WS /worker`
@@ -65,6 +66,8 @@ The worker now keeps built-in actions behind an internal registry and reports it
 Capabilities include lightweight parameter schemas. The schema shape intentionally stays close to JSON Schema object parameters so an agent, web console, or plugin host can discover required arguments before invoking an action.
 
 World snapshots are published by the worker and cached by the gateway. They include bot status, capabilities, nearby players, and recent chat. This is the first context surface intended for the agent runtime.
+
+Task snapshots are published for every action invocation. Short actions usually move from `running` to `completed` immediately; long-running actions such as `follow_player` remain `running` until replaced, stopped, failed, or cancelled. The gateway exposes current and recent tasks through `GET /bots/:botId/tasks`.
 
 ### Capability Runtime
 
