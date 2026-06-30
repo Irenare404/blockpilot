@@ -26,6 +26,11 @@ export interface BotStatus {
   lastError?: string;
 }
 
+export interface BotAction {
+  name: string;
+  args?: JsonRecord;
+}
+
 export interface ChatAction {
   name: "chat";
   args: {
@@ -48,7 +53,7 @@ export interface FollowPlayerAction {
   };
 }
 
-export type BotAction = ChatAction | StopAction | FollowPlayerAction;
+export type BuiltInBotAction = ChatAction | StopAction | FollowPlayerAction;
 
 export interface BotCapabilityParameterSchema {
   type: "string" | "number" | "boolean";
@@ -67,7 +72,7 @@ export interface BotCapabilityParametersSchema {
 }
 
 export interface BotCapability {
-  name: BotAction["name"];
+  name: string;
   description: string;
   source: "builtin" | "plugin";
   parameters: BotCapabilityParametersSchema;
@@ -187,23 +192,7 @@ export function isBotAction(value: unknown): value is BotAction {
     return false;
   }
 
-  if (value.name === "chat") {
-    return isRecord(value.args) && typeof value.args.message === "string" && value.args.message.trim().length > 0;
-  }
-
-  if (value.name === "stop") {
-    return value.args === undefined || isRecord(value.args);
-  }
-
-  if (value.name === "follow_player") {
-    if (!isRecord(value.args) || typeof value.args.playerName !== "string" || value.args.playerName.trim().length === 0) {
-      return false;
-    }
-
-    return value.args.distance === undefined || (typeof value.args.distance === "number" && value.args.distance > 0);
-  }
-
-  return false;
+  return value.name.trim().length > 0 && (value.args === undefined || isRecord(value.args));
 }
 
 export function asErrorMessage(error: unknown): string {

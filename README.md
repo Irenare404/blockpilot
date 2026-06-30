@@ -27,6 +27,7 @@ It supports:
 - Event streaming for bot status and Minecraft chat events.
 - Three controlled actions: `chat`, `follow_player`, and `stop`.
 - A small built-in chat intent layer for follow and stop commands.
+- A bot worker plugin runtime for adding capabilities.
 
 ## Direction
 
@@ -111,6 +112,14 @@ curl -X POST http://127.0.0.1:8787/bots/local-bot/actions \
   -d "{\"name\":\"stop\"}"
 ```
 
+Report the bot position through a plugin action:
+
+```bash
+curl -X POST http://127.0.0.1:8787/bots/local-bot/actions \
+  -H "content-type: application/json" \
+  -d "{\"name\":\"report_position\",\"args\":{}}"
+```
+
 ### Windows cmd Examples
 
 If your bot ID is `BlockPilot`, use these from `cmd.exe`:
@@ -141,7 +150,17 @@ curl -X POST http://127.0.0.1:8787/bots/BlockPilot/actions ^
   -d "{\"name\":\"stop\"}"
 ```
 
+```bat
+curl -X POST http://127.0.0.1:8787/bots/BlockPilot/actions ^
+  -H "content-type: application/json" ^
+  -d "{\"name\":\"report_position\",\"args\":{}}"
+```
+
 `follow_player` requires the target player to be visible to the bot.
+
+## Plugins
+
+Bot worker capabilities are registered through plugins. See [docs/plugins.md](docs/plugins.md) for the current plugin shape and an example action.
 
 ### In-Game Chat Intents
 

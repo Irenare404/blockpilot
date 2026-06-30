@@ -50,6 +50,7 @@ Current actions:
 
 - `chat`
 - `follow_player`
+- `report_position`
 - `stop`
 
 Current built-in chat intents:
@@ -67,4 +68,6 @@ Capabilities may be built in or loaded as plugins. The agent should see a unifie
 
 - Built-in tools cover core behavior.
 - Plugins register optional tools and event handlers.
-- The raw Minecraft client is not exposed to plugins by default.
+- Internal worker plugins receive safe helpers and can opt into the live Mineflayer bot through `ctx.minecraft.requireBot()` for advanced behavior. Future externally loaded plugins should be sandboxed more tightly.
+
+The current worker plugin runtime loads plugins from `apps/bot-worker/src/plugins/index.ts`. This is intentionally static for the first implementation; dynamic discovery and sandboxing can be added once the plugin contract stabilizes.

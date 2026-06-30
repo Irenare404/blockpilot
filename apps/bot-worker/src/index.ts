@@ -8,8 +8,6 @@ import {
   safeJsonParse,
   type ActionResult,
   type BlockPilotEvent,
-  type BotAction,
-  type BotCapability,
   type BotConnectionState,
   type BotStatus,
   type GatewayToWorkerMessage,
@@ -19,6 +17,8 @@ import {
 import { createBot, type Bot, type BotOptions } from "mineflayer";
 import pathfinderPackage from "mineflayer-pathfinder";
 import { WebSocket, type RawData } from "ws";
+import { PluginRuntime } from "./plugin-runtime.js";
+import { builtInPlugins } from "./plugins/index.js";
 
 const { goals, Movements, pathfinder } = pathfinderPackage;
 
@@ -35,27 +35,6 @@ type PathfinderBot = Bot & {
   pathfinder: PathfinderController;
 };
 
-type WorkerActionName = BotAction["name"];
-type ActionHandler<TName extends WorkerActionName> = (
-  activeBot: Bot,
-  action: Extract<BotAction, { name: TName }>,
-) => Promise<ActionResult> | ActionResult;
-
-interface RegisteredAction<TName extends WorkerActionName = WorkerActionName> {
-  capability: BotCapability & { name: TName };
-  run: (activeBot: Bot, action: BotAction) => Promise<ActionResult> | ActionResult;
-}
-
-type ChatIntent =
-  | {
-      name: "follow_player";
-      playerName: string;
-      distance: number;
-    }
-  | {
-      name: "stop";
-    };
-
 interface WorkerConfig {
   botId: string;
   gatewayUrl: string;
@@ -67,8 +46,6 @@ interface WorkerConfig {
 }
 
 const config = readConfig();
-const actionRegistry = new Map<WorkerActionName, RegisteredAction>();
-registerBuiltInActions();
 
 let bot: Bot | undefined;
 let gateway: WebSocket | undefined;
@@ -77,6 +54,31 @@ let connectedAt: string | undefined;
 let lastError: string | undefined;
 let shuttingDown = false;
 let gatewayReconnectTimer: ReturnType<typeof setTimeout> | undefined;
+
+const pluginRuntime = new PluginRuntime({
+  config: {
+    botId: config.botId,
+    username: config.username,
+  },
+  emitEvent: publishEvent,
+  logger: {
+    error: (message) => console.error(message),
+    info: (message) => console.log(message),
+    warn: (message) => console.warn(message),
+  },
+  minecraft: {
+    chat: (message) => {
+      bot?.chat(message);
+    },
+    followPlayer: (playerName, distance) => followPlayer(requireBot(), playerName, distance),
+    requireBot,
+    stopCurrentControls: (reason) => {
+      stopCurrentControls(requireBot(), reason);
+    },
+  },
+});
+
+await pluginRuntime.load(builtInPlugins);
 
 console.log(`[bot-worker] starting '${config.botId}'`);
 console.log(`[bot-worker] gateway: ${config.gatewayUrl}`);
@@ -115,7 +117,7 @@ function connectGateway(): void {
       protocolVersion: BLOCKPILOT_PROTOCOL_VERSION,
       botId: config.botId,
       workerName: "blockpilot-bot-worker",
-      capabilities: getCapabilities(),
+      capabilities: pluginRuntime.listCapabilities(),
     });
     publishStatus();
   });
@@ -173,7 +175,10 @@ function connectMinecraft(): void {
       message,
     });
 
-    void handleChatIntent(username, message);
+    void pluginRuntime.emitChat({
+      username,
+      message,
+    });
   });
 
   bot.on("health", () => {
@@ -232,7 +237,7 @@ function handleGatewayMessage(data: RawData): void {
 
 async function runCommand(message: Extract<GatewayToWorkerMessage, { type: "gateway.command" }>): Promise<void> {
   try {
-    const result = await executeAction(message.action);
+    const result = await pluginRuntime.execute(message.action);
     sendToGateway({
       type: "worker.result",
       requestId: message.requestId,
@@ -247,111 +252,6 @@ async function runCommand(message: Extract<GatewayToWorkerMessage, { type: "gate
       error: asErrorMessage(error),
     });
   }
-}
-
-function registerBuiltInActions(): void {
-  registerAction(
-    {
-      name: "chat",
-      description: "Send a chat message as the bot.",
-      source: "builtin",
-      parameters: {
-        type: "object",
-        properties: {
-          message: {
-            type: "string",
-            description: "Message to send in Minecraft chat.",
-          },
-        },
-        required: ["message"],
-        additionalProperties: false,
-      },
-    },
-    (activeBot, action) => {
-      activeBot.chat(action.args.message);
-      return {
-        ok: true,
-        message: "Message sent",
-      };
-    },
-  );
-
-  registerAction(
-    {
-      name: "follow_player",
-      description: "Follow a visible player with pathfinding.",
-      source: "builtin",
-      parameters: {
-        type: "object",
-        properties: {
-          playerName: {
-            type: "string",
-            description: "Visible Minecraft player name to follow.",
-          },
-          distance: {
-            type: "number",
-            description: "Preferred follow distance in blocks.",
-            default: 2,
-            minimum: 1,
-            maximum: 16,
-          },
-        },
-        required: ["playerName"],
-        additionalProperties: false,
-      },
-    },
-    (activeBot, action) => followPlayer(activeBot, action.args.playerName, action.args.distance),
-  );
-
-  registerAction(
-    {
-      name: "stop",
-      description: "Stop current movement and clear active controls.",
-      source: "builtin",
-      parameters: {
-        type: "object",
-        properties: {
-          reason: {
-            type: "string",
-            description: "Optional reason recorded in the event stream.",
-          },
-        },
-        additionalProperties: false,
-      },
-    },
-    (activeBot, action) => {
-      stopCurrentControls(activeBot, action.args?.reason);
-      return {
-        ok: true,
-        message: "Current controls stopped",
-      };
-    },
-  );
-}
-
-function registerAction<TName extends WorkerActionName>(
-  capability: BotCapability & { name: TName },
-  run: ActionHandler<TName>,
-): void {
-  actionRegistry.set(capability.name, {
-    capability,
-    run: (activeBot, action) => run(activeBot, action as Extract<BotAction, { name: TName }>),
-  });
-}
-
-function getCapabilities(): BotCapability[] {
-  return [...actionRegistry.values()].map((registered) => registered.capability);
-}
-
-async function executeAction(action: BotAction): Promise<ActionResult> {
-  const activeBot = requireBot();
-  const registered = actionRegistry.get(action.name);
-
-  if (!registered) {
-    throw new Error(`Unknown action '${action.name}'`);
-  }
-
-  return registered.run(activeBot, action);
 }
 
 async function followPlayer(activeBot: Bot, playerName: string, distance = 2): Promise<ActionResult> {
@@ -379,107 +279,6 @@ async function followPlayer(activeBot: Bot, playerName: string, distance = 2): P
       distance: followDistance,
     },
   };
-}
-
-async function handleChatIntent(username: string, message: string): Promise<void> {
-  const intent = parseChatIntent(username, message);
-  if (!intent) {
-    return;
-  }
-
-  try {
-    if (intent.name === "follow_player") {
-      const result = await executeAction({
-        name: "follow_player",
-        args: {
-          playerName: intent.playerName,
-          distance: intent.distance,
-        },
-      });
-      bot?.chat(result.message ?? `Following ${intent.playerName}`);
-      return;
-    }
-
-    await executeAction({
-      name: "stop",
-      args: {
-        reason: `Chat stop command from '${username}'`,
-      },
-    });
-    bot?.chat("Stopped.");
-  } catch (error) {
-    const errorMessage = asErrorMessage(error);
-    publishEvent("intent.error", errorMessage, {
-      username,
-      message,
-    });
-    bot?.chat(errorMessage);
-  }
-}
-
-function parseChatIntent(username: string, message: string): ChatIntent | undefined {
-  const normalized = normalizeChatMessage(message);
-  if (!normalized) {
-    return undefined;
-  }
-
-  if (isStopIntent(normalized)) {
-    return {
-      name: "stop",
-    };
-  }
-
-  if (isFollowIntent(normalized)) {
-    return {
-      name: "follow_player",
-      playerName: username,
-      distance: 2,
-    };
-  }
-
-  return undefined;
-}
-
-function isFollowIntent(normalized: string): boolean {
-  const directCommands = new Set([
-    "come",
-    "come here",
-    "follow",
-    "follow me",
-    "过来",
-    "来",
-    "来我这",
-    "来我这里",
-    "跟我",
-    "跟着我",
-    "跟随我",
-  ]);
-
-  if (directCommands.has(normalized)) {
-    return true;
-  }
-
-  return isAddressedToBot(normalized) && /(?:come here|follow me|过来|来我这|来我这里|跟我|跟着我|跟随我)/u.test(normalized);
-}
-
-function isStopIntent(normalized: string): boolean {
-  const directCommands = new Set(["stop", "cancel", "停止", "停下", "别跟了", "别跟着我"]);
-
-  if (directCommands.has(normalized)) {
-    return true;
-  }
-
-  return isAddressedToBot(normalized) && /(?:stop|cancel|停止|停下|别跟了|别跟着我)/u.test(normalized);
-}
-
-function isAddressedToBot(normalized: string): boolean {
-  const botName = config.username.toLowerCase();
-  const botId = config.botId.toLowerCase();
-  return normalized.includes(botName) || normalized.includes(botId) || normalized.startsWith("bot ") || normalized.startsWith("bp ");
-}
-
-function normalizeChatMessage(message: string): string {
-  return message.trim().toLowerCase().replace(/[，。！？!?,.]/gu, "").replace(/\s+/gu, " ");
 }
 
 function configurePathfinder(activeBot: PathfinderBot): void {

@@ -356,18 +356,18 @@ function parseActionBody(body: unknown): BotAction | undefined {
     body.playerName.trim().length > 0
   ) {
     const distance = typeof body.distance === "number" && body.distance > 0 ? body.distance : undefined;
-    const action: BotAction = {
-      name: "follow_player",
-      args: {
-        playerName: body.playerName,
-      },
+    const args: BotAction["args"] = {
+      playerName: body.playerName,
     };
 
     if (distance !== undefined) {
-      action.args.distance = distance;
+      args.distance = distance;
     }
 
-    return action;
+    return {
+      name: "follow_player",
+      args,
+    };
   }
 
   return undefined;
