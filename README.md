@@ -28,7 +28,7 @@ It supports:
 - Controlled actions: `chat`, `follow_player`, `report_position`, `world_snapshot`, and `stop`.
 - A small built-in chat intent layer for direct follow and stop commands.
 - A bot worker plugin runtime for adding capabilities.
-- A first rule-based agent runtime that reads world snapshots and calls bot actions.
+- A swappable agent runtime with a rule planner and an OpenAI-compatible LLM planner.
 
 ## Direction
 
@@ -36,7 +36,7 @@ It supports:
 - The gateway exposes status, events, world snapshots, tasks, and actions to agents, dashboards, and plugins.
 - Built-in skills provide the first useful behaviors before external plugins are needed.
 - Plugins extend tools and event handlers through a controlled SDK instead of touching the raw Minecraft client.
-- The agent runtime consumes the gateway API, so future LLM planning can replace the first rule engine without changing the worker.
+- The agent runtime consumes the gateway API, so LLM planning can evolve without changing the worker.
 
 ## Requirements
 
@@ -70,7 +70,7 @@ $env:MC_AUTH="offline"
 corepack pnpm dev:bot
 ```
 
-In a third shell, start the first minimal agent runtime:
+In a third shell, start the default rule planner:
 
 ```powershell
 $env:BLOCKPILOT_BOT_ID="BlockPilot"
@@ -90,7 +90,7 @@ Then test the agent from Minecraft chat:
 !bp stop
 ```
 
-The current agent is intentionally rule-based. It proves the context-reading and tool-calling loop first; the planner can later be replaced by an LLM-backed agent.
+The default rule planner is still useful for quick tests. Use the LLM planner when you want natural language like `BlockPilot 你来我这边一下` instead of mechanical command words.
 
 ## Gateway API
 
@@ -226,10 +226,23 @@ Environment variables:
 
 - `BLOCKPILOT_BOT_ID`: bot id to control. Defaults to `BlockPilot`.
 - `BLOCKPILOT_GATEWAY_HTTP`: gateway HTTP base URL. Defaults to `http://127.0.0.1:8787`.
+- `BLOCKPILOT_AGENT_PLANNER`: `rule` or `llm`. Defaults to `rule`.
 - `BLOCKPILOT_AGENT_PREFIX`: in-game command prefix. Defaults to `!bp`.
+- `BLOCKPILOT_AGENT_ALIASES`: comma-separated names players may use for the bot, such as `bp,helper`.
+- `BLOCKPILOT_AGENT_ALLOWED_ACTIONS`: comma-separated action whitelist. Defaults to `chat,follow_player,stop,report_position,world_snapshot`.
 - `BLOCKPILOT_AGENT_TICK_MS`: polling interval. Defaults to `2000`.
 
-The rule agent currently handles `help`, `status`, `where`, `world`, `follow`, and `stop`. It uses the gateway capability list before calling optional actions, so plugin-provided tools can appear in agent context without changing the agent transport.
+The rule planner handles `!bp help`, `!bp status`, `!bp where`, `!bp world`, `!bp follow`, and `!bp stop`.
+
+The LLM planner sends the model the bot id, the live Minecraft username from the world snapshot, configured aliases, the current speaker, recent chat, nearby players, current task, and available capabilities. The model must first return `addressedToBot`; if the message is for another player or general server chat, the agent ignores it. This lets it understand natural phrases such as `BlockPilot 你过来一下`, `小助手跟我走`, or `你先停一下`, while still avoiding random reactions to other players.
+
+LLM planner variables:
+
+- `BLOCKPILOT_LLM_API_KEY` or `OPENAI_API_KEY`: API key for an OpenAI-compatible chat completions endpoint.
+- `BLOCKPILOT_LLM_BASE_URL`: endpoint base URL. Defaults to `https://api.openai.com/v1`.
+- `BLOCKPILOT_LLM_MODEL`: model name. Required for `BLOCKPILOT_AGENT_PLANNER=llm`.
+- `BLOCKPILOT_LLM_TEMPERATURE`: defaults to `0.2`.
+- `BLOCKPILOT_LLM_TIMEOUT_MS`: defaults to `15000`.
 
 For `cmd.exe`, start it like this:
 
@@ -237,6 +250,18 @@ For `cmd.exe`, start it like this:
 set "BLOCKPILOT_BOT_ID=BlockPilot"
 set "BLOCKPILOT_GATEWAY_HTTP=http://127.0.0.1:8787"
 set "BLOCKPILOT_AGENT_PREFIX=!bp"
+corepack pnpm dev:agent
+```
+
+For `cmd.exe`, start the LLM planner like this:
+
+```bat
+set "BLOCKPILOT_BOT_ID=BlockPilot"
+set "BLOCKPILOT_GATEWAY_HTTP=http://127.0.0.1:8787"
+set "BLOCKPILOT_AGENT_PLANNER=llm"
+set "BLOCKPILOT_AGENT_ALIASES=bp,helper"
+set "BLOCKPILOT_LLM_API_KEY=your-api-key"
+set "BLOCKPILOT_LLM_MODEL=your-model-name"
 corepack pnpm dev:agent
 ```
 

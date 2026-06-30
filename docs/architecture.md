@@ -73,14 +73,21 @@ Task snapshots are published for every action invocation. Short actions usually 
 
 The agent runtime is a process outside the worker. It consumes the gateway API, reads world snapshots, watches recent chat, and invokes actions through `POST /bots/:botId/actions`.
 
-The first implementation is rule-based and intentionally small:
+The agent runtime hosts a swappable planner. The first planner is rule-based and intentionally small:
 
 - Poll `GET /bots/:botId/world`.
 - Detect in-game commands with the `!bp` prefix.
 - Use the world snapshot capability list before calling optional tools.
 - Call `chat`, `report_position`, `follow_player`, and `stop` through the gateway.
 
-This gives BlockPilot the final process boundary needed for an LLM planner: the future planner can replace the current rule interpreter while keeping the same context and tool-calling transport.
+The LLM planner keeps the same boundary but replaces command parsing with model planning:
+
+- The planner receives the bot id, live Minecraft username, configured aliases, current speaker, recent chat, nearby players, task state, and available capabilities.
+- The model must explicitly decide whether the current message is addressed to the bot before replying or invoking tools.
+- The model returns structured JSON with `addressedToBot`, a short optional reply, and a bounded list of actions.
+- The agent runtime applies an action whitelist and the live capability registry before forwarding any action to the gateway.
+
+This keeps natural language understanding outside the worker while making the model aware of its own player name and preventing it from reacting to messages meant for other players.
 
 ### Capability Runtime
 
