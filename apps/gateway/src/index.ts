@@ -13,6 +13,7 @@ import {
   type BotCapability,
   type BotStatus,
   type GatewayCommandMessage,
+  type WorldSnapshot,
   type WorkerResultMessage,
 } from "@blockpilot/core";
 import { WebSocket, WebSocketServer, type RawData } from "ws";
@@ -28,6 +29,7 @@ interface WorkerSession {
   socket: WebSocket;
   status: BotStatus;
   capabilities: BotCapability[];
+  world?: WorldSnapshot;
   pending: Map<string, PendingCommand>;
 }
 
@@ -107,6 +109,7 @@ eventServer.on("connection", (socket) => {
       type: "gateway.snapshot",
       protocolVersion: BLOCKPILOT_PROTOCOL_VERSION,
       bots: [...workerSessions.values()].map((session) => session.status),
+      worlds: [...workerSessions.values()].map((session) => session.world ?? createFallbackWorldSnapshot(session)),
     }),
   );
 
@@ -173,6 +176,20 @@ async function handleHttpRequest(request: IncomingMessage, response: ServerRespo
       botId,
       actions: session.capabilities,
     });
+    return;
+  }
+
+  const worldMatch = /^\/bots\/([^/]+)\/world$/.exec(url.pathname);
+  if (request.method === "GET" && worldMatch?.[1]) {
+    const botId = decodeURIComponent(worldMatch[1]);
+    const session = workerSessions.get(botId);
+
+    if (!session) {
+      sendJson(response, 404, { error: `Unknown bot '${botId}'` });
+      return;
+    }
+
+    sendJson(response, 200, session.world ?? createFallbackWorldSnapshot(session));
     return;
   }
 
@@ -260,6 +277,16 @@ function handleWorkerMessage(socket: WebSocket, data: RawData): void {
     return;
   }
 
+  if (parsed.type === "worker.world") {
+    session.world = parsed.snapshot;
+    workerSessions.set(session.botId, session);
+    broadcast({
+      type: "gateway.world",
+      snapshot: parsed.snapshot,
+    });
+    return;
+  }
+
   if (parsed.type === "worker.event") {
     broadcast({
       type: "gateway.event",
@@ -278,6 +305,17 @@ function handleWorkerMessage(socket: WebSocket, data: RawData): void {
   clearTimeout(pending.timeout);
   session.pending.delete(parsed.requestId);
   pending.resolve(parsed);
+}
+
+function createFallbackWorldSnapshot(session: WorkerSession): WorldSnapshot {
+  return {
+    botId: session.botId,
+    updatedAt: nowIso(),
+    status: session.status,
+    capabilities: session.capabilities,
+    nearbyPlayers: [],
+    recentChat: [],
+  };
 }
 
 function dispatchAction(botId: string, action: BotAction): Promise<WorkerResultMessage> {

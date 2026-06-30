@@ -78,6 +78,27 @@ export interface BotCapability {
   parameters: BotCapabilityParametersSchema;
 }
 
+export interface NearbyPlayerSnapshot {
+  username: string;
+  position?: Vec3Like;
+  distance?: number;
+}
+
+export interface ChatMessageSnapshot {
+  username: string;
+  message: string;
+  receivedAt: string;
+}
+
+export interface WorldSnapshot {
+  botId: string;
+  updatedAt: string;
+  status: BotStatus;
+  capabilities: BotCapability[];
+  nearbyPlayers: NearbyPlayerSnapshot[];
+  recentChat: ChatMessageSnapshot[];
+}
+
 export interface ActionResult {
   ok: boolean;
   message?: string;
@@ -106,6 +127,11 @@ export interface WorkerStatusMessage {
   status: BotStatus;
 }
 
+export interface WorkerWorldMessage {
+  type: "worker.world";
+  snapshot: WorldSnapshot;
+}
+
 export interface WorkerEventMessage {
   type: "worker.event";
   event: BlockPilotEvent;
@@ -122,6 +148,7 @@ export interface WorkerResultMessage {
 export type WorkerToGatewayMessage =
   | WorkerHelloMessage
   | WorkerStatusMessage
+  | WorkerWorldMessage
   | WorkerEventMessage
   | WorkerResultMessage;
 
@@ -169,6 +196,8 @@ export function isWorkerToGatewayMessage(value: unknown): value is WorkerToGatew
       return typeof value.botId === "string" && typeof value.protocolVersion === "string";
     case "worker.status":
       return isRecord(value.status) && typeof value.status.botId === "string";
+    case "worker.world":
+      return isRecord(value.snapshot) && typeof value.snapshot.botId === "string";
     case "worker.event":
       return isRecord(value.event) && typeof value.event.botId === "string" && typeof value.event.kind === "string";
     case "worker.result":

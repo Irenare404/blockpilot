@@ -88,6 +88,12 @@ curl http://127.0.0.1:8787/bots/local-bot/actions
 
 Each action includes a lightweight parameter schema so agents and future UI surfaces can discover how to call it.
 
+Fetch the bot world snapshot:
+
+```bash
+curl http://127.0.0.1:8787/bots/local-bot/world
+```
+
 Send a chat message through the bot:
 
 ```bash
@@ -120,6 +126,14 @@ curl -X POST http://127.0.0.1:8787/bots/local-bot/actions \
   -d "{\"name\":\"report_position\",\"args\":{}}"
 ```
 
+Capture a world snapshot through a plugin action:
+
+```bash
+curl -X POST http://127.0.0.1:8787/bots/local-bot/actions \
+  -H "content-type: application/json" \
+  -d "{\"name\":\"world_snapshot\",\"args\":{}}"
+```
+
 ### Windows cmd Examples
 
 If your bot ID is `BlockPilot`, use these from `cmd.exe`:
@@ -130,6 +144,10 @@ curl http://127.0.0.1:8787/bots
 
 ```bat
 curl http://127.0.0.1:8787/bots/BlockPilot/actions
+```
+
+```bat
+curl http://127.0.0.1:8787/bots/BlockPilot/world
 ```
 
 ```bat
@@ -154,6 +172,12 @@ curl -X POST http://127.0.0.1:8787/bots/BlockPilot/actions ^
 curl -X POST http://127.0.0.1:8787/bots/BlockPilot/actions ^
   -H "content-type: application/json" ^
   -d "{\"name\":\"report_position\",\"args\":{}}"
+```
+
+```bat
+curl -X POST http://127.0.0.1:8787/bots/BlockPilot/actions ^
+  -H "content-type: application/json" ^
+  -d "{\"name\":\"world_snapshot\",\"args\":{}}"
 ```
 
 `follow_player` requires the target player to be visible to the bot.

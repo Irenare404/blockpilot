@@ -11,8 +11,10 @@ import {
   type BotConnectionState,
   type BotStatus,
   type GatewayToWorkerMessage,
+  type ChatMessageSnapshot,
   type JsonRecord,
   type WorkerToGatewayMessage,
+  type WorldSnapshot,
 } from "@blockpilot/core";
 import { createBot, type Bot, type BotOptions } from "mineflayer";
 import pathfinderPackage from "mineflayer-pathfinder";
@@ -54,6 +56,7 @@ let connectedAt: string | undefined;
 let lastError: string | undefined;
 let shuttingDown = false;
 let gatewayReconnectTimer: ReturnType<typeof setTimeout> | undefined;
+const recentChat: ChatMessageSnapshot[] = [];
 
 const pluginRuntime = new PluginRuntime({
   config: {
@@ -76,6 +79,9 @@ const pluginRuntime = new PluginRuntime({
       stopCurrentControls(requireBot(), reason);
     },
   },
+  world: {
+    getSnapshot: createWorldSnapshot,
+  },
 });
 
 await pluginRuntime.load(builtInPlugins);
@@ -89,6 +95,7 @@ connectMinecraft();
 
 const statusTimer = setInterval(() => {
   publishStatus();
+  publishWorldSnapshot();
 }, 5_000);
 
 statusTimer.unref();
@@ -174,6 +181,7 @@ function connectMinecraft(): void {
       username,
       message,
     });
+    rememberChat(username, message);
 
     void pluginRuntime.emitChat({
       username,
@@ -338,6 +346,13 @@ function publishStatus(): void {
   });
 }
 
+function publishWorldSnapshot(): void {
+  sendToGateway({
+    type: "worker.world",
+    snapshot: createWorldSnapshot(),
+  });
+}
+
 function publishEvent(kind: string, message?: string, payload?: JsonRecord): void {
   const event: BlockPilotEvent = {
     id: createId("evt"),
@@ -358,6 +373,51 @@ function publishEvent(kind: string, message?: string, payload?: JsonRecord): voi
     type: "worker.event",
     event,
   });
+}
+
+function createWorldSnapshot(): WorldSnapshot {
+  return {
+    botId: config.botId,
+    updatedAt: nowIso(),
+    status: createStatus(),
+    capabilities: pluginRuntime.listCapabilities(),
+    nearbyPlayers: createNearbyPlayerSnapshots(),
+    recentChat: [...recentChat],
+  };
+}
+
+function createNearbyPlayerSnapshots(): WorldSnapshot["nearbyPlayers"] {
+  const activeBot = bot;
+  const botPosition = activeBot?.entity?.position;
+
+  if (!activeBot) {
+    return [];
+  }
+
+  return Object.entries(activeBot.players)
+    .filter(([username, player]) => username !== activeBot.username && Boolean(player.entity))
+    .map(([username, player]) => {
+      const position = player.entity?.position;
+      const snapshot: WorldSnapshot["nearbyPlayers"][number] = {
+        username,
+      };
+
+      if (position) {
+        snapshot.position = {
+          x: round(position.x),
+          y: round(position.y),
+          z: round(position.z),
+        };
+      }
+
+      if (position && botPosition) {
+        snapshot.distance = round(position.distanceTo(botPosition));
+      }
+
+      return snapshot;
+    })
+    .sort((a, b) => (a.distance ?? Number.POSITIVE_INFINITY) - (b.distance ?? Number.POSITIVE_INFINITY))
+    .slice(0, 16);
 }
 
 function createStatus(): BotStatus {
@@ -408,6 +468,18 @@ function createStatus(): BotStatus {
   }
 
   return status;
+}
+
+function rememberChat(username: string, message: string): void {
+  recentChat.push({
+    username,
+    message,
+    receivedAt: nowIso(),
+  });
+
+  if (recentChat.length > 20) {
+    recentChat.splice(0, recentChat.length - 20);
+  }
 }
 
 function sendToGateway(message: WorkerToGatewayMessage): void {

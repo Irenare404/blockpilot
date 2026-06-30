@@ -65,9 +65,11 @@ Plugins receive a controlled context:
 - `ctx.minecraft.requireBot()` returns the live Mineflayer bot for advanced behavior.
 - `ctx.minecraft.followPlayer(...)` and `ctx.minecraft.stopCurrentControls(...)` expose safe movement helpers.
 - `ctx.emitEvent(...)` publishes events to the gateway.
+- `ctx.world.getSnapshot()` reads the current world snapshot.
 
 ## Current Plugins
 
 - `blockpilot.core-actions`: `chat`, `follow_player`, `stop`
 - `blockpilot.chat-intents`: in-game follow and stop commands
 - `blockpilot.report-position`: `report_position`
+- `blockpilot.world-snapshot`: `world_snapshot`

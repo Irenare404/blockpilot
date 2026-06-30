@@ -1,4 +1,4 @@
-import { isRecord, type ActionResult, type BotAction, type BotCapability, type JsonRecord, type JsonValue } from "@blockpilot/core";
+import { isRecord, type ActionResult, type BotAction, type BotCapability, type JsonRecord, type JsonValue, type WorldSnapshot } from "@blockpilot/core";
 import type { Bot } from "mineflayer";
 
 export interface ChatEvent {
@@ -35,6 +35,9 @@ export interface WorkerPluginContext {
     warn: (message: string) => void;
   };
   minecraft: WorkerMinecraftApi;
+  world: {
+    getSnapshot: () => WorldSnapshot;
+  };
 }
 
 export interface WorkerPlugin {
@@ -57,6 +60,7 @@ interface PluginRuntimeOptions {
   emitEvent: WorkerPluginContext["emitEvent"];
   logger: WorkerPluginContext["logger"];
   minecraft: WorkerMinecraftApi;
+  world: WorkerPluginContext["world"];
 }
 
 export class PluginRuntime {
@@ -136,6 +140,7 @@ export class PluginRuntime {
       },
       logger: this.options.logger,
       minecraft: this.options.minecraft,
+      world: this.options.world,
     };
   }
 
