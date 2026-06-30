@@ -1048,13 +1048,17 @@ function assessHostileEntity(
   blocks: WorldSnapshot["blocks"],
 ): WorldSnapshot["safety"]["threats"][number] {
   const distance = entity.distance ?? Number.POSITIVE_INFINITY;
-  const trapped = isEntityLikelyContained(entity, blocks);
-  const canReachBot = !trapped && distance <= 14 && Math.abs((entity.position?.y ?? 0) - (bot?.entity?.position.y ?? 0)) <= 4;
+  const containmentReason = getEntityContainmentReason(entity, blocks);
+  const trapped = Boolean(containmentReason);
+  const verticalDelta = Math.abs((entity.position?.y ?? 0) - (bot?.entity?.position.y ?? 0));
+  const canReachBot = !trapped && distance <= 14 && verticalDelta <= 4;
   let severity: DangerLevel = "watch";
   let reason = `${entity.displayName ?? entity.name} is nearby.`;
 
-  if (trapped) {
-    reason = `${entity.displayName ?? entity.name} is nearby but likely contained by a farm or spawner setup.`;
+  if (containmentReason === "near_spawner") {
+    reason = `${entity.displayName ?? entity.name} is near a spawner and likely part of a farm setup.`;
+  } else if (containmentReason === "vertical_separation") {
+    reason = `${entity.displayName ?? entity.name} is vertically separated from the bot and likely cannot reach it now.`;
   } else if (canReachBot && distance <= 4) {
     severity = "critical";
     reason = `${entity.displayName ?? entity.name} is very close and can likely reach the bot.`;
@@ -1075,6 +1079,10 @@ function assessHostileEntity(
     canReachBot,
   };
 
+  if (containmentReason) {
+    threat.containmentReason = containmentReason;
+  }
+
   if (entity.position) {
     threat.position = entity.position;
   }
@@ -1086,20 +1094,27 @@ function assessHostileEntity(
   return threat;
 }
 
-function isEntityLikelyContained(
+function getEntityContainmentReason(
   entity: WorldSnapshot["entities"]["mobs"][number],
   blocks: WorldSnapshot["blocks"],
-): boolean {
+): string | undefined {
   const entityPosition = entity.position;
   if (!entityPosition) {
-    return false;
+    return undefined;
   }
 
   const nearSpawner = blocks.nearbySpawners.some((block) => distanceBetween(block.position, entityPosition) <= 8);
+  if (nearSpawner) {
+    return "near_spawner";
+  }
+
   const botPosition = bot?.entity?.position;
   const verticallySeparated = botPosition ? Math.abs(entityPosition.y - botPosition.y) > 4 : false;
+  if (verticallySeparated) {
+    return "vertical_separation";
+  }
 
-  return nearSpawner || verticallySeparated;
+  return undefined;
 }
 
 function getDangerBlockSeverity(block: WorldSnapshot["blocks"]["nearbyDangerBlocks"][number]): DangerLevel {

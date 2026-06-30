@@ -23,7 +23,7 @@ It supports:
 - A bot worker that joins a Java server through Mineflayer.
 - Worker registration through WebSocket.
 - Event streaming for bot status and Minecraft chat events.
-- Controlled actions: `chat`, `follow_player`, `go_to_position`, `dig_nearest_block`, `eat_food`, `retreat_from_threat`, `report_position`, `world_snapshot`, and `stop`.
+- Controlled actions: `chat`, `follow_player`, `go_to_position`, `dig_nearest_block`, `place_block`, `use_nearest_block`, `inspect_nearest_container`, `collect_nearest_item`, `eat_food`, `retreat_from_threat`, `report_position`, `world_snapshot`, and `stop`.
 - Local world perception for entities, important blocks, inventory, equipment, and safety.
 - Safety reflexes for eating and retreating before the LLM planner runs.
 - Agent memory for home, places, nearby players, and recent observations.
@@ -81,6 +81,10 @@ Rule planner test commands in Minecraft chat:
 !bp go home
 !bp memory
 !bp dig dirt
+!bp container
+!bp use door
+!bp collect item
+!bp place dirt 16 66 10
 ```
 
 Use the LLM planner when you want natural language like `BlockPilot come here please` or Chinese phrases such as &#x4F60;&#x8FC7;&#x6765;&#x4E00;&#x4E0B; instead of mechanical command words.
@@ -133,6 +137,38 @@ Dig nearby dirt or grass blocks:
 curl -X POST http://127.0.0.1:8787/bots/BlockPilot/actions \
   -H "content-type: application/json" \
   -d "{\"name\":\"dig_nearest_block\",\"args\":{\"blockName\":\"dirt,grass_block\",\"maxDistance\":6,\"count\":1}}"
+```
+
+Place a block at a coordinate:
+
+```bash
+curl -X POST http://127.0.0.1:8787/bots/BlockPilot/actions \
+  -H "content-type: application/json" \
+  -d "{\"name\":\"place_block\",\"args\":{\"itemName\":\"dirt\",\"x\":16,\"y\":66,\"z\":10}}"
+```
+
+Use a nearby block such as a door, button, lever, chest, furnace, or crafting table:
+
+```bash
+curl -X POST http://127.0.0.1:8787/bots/BlockPilot/actions \
+  -H "content-type: application/json" \
+  -d "{\"name\":\"use_nearest_block\",\"args\":{\"blockName\":\"door\",\"maxDistance\":5}}"
+```
+
+Inspect the nearest container without moving items:
+
+```bash
+curl -X POST http://127.0.0.1:8787/bots/BlockPilot/actions \
+  -H "content-type: application/json" \
+  -d "{\"name\":\"inspect_nearest_container\",\"args\":{\"maxDistance\":6}}"
+```
+
+Collect a nearby dropped item:
+
+```bash
+curl -X POST http://127.0.0.1:8787/bots/BlockPilot/actions \
+  -H "content-type: application/json" \
+  -d "{\"name\":\"collect_nearest_item\",\"args\":{\"maxDistance\":16,\"timeoutMs\":8000}}"
 ```
 
 Stop controls:
@@ -203,6 +239,18 @@ curl -X POST http://127.0.0.1:8787/bots/BlockPilot/actions ^
 ```bat
 curl -X POST http://127.0.0.1:8787/bots/BlockPilot/actions ^
   -H "content-type: application/json" ^
+  -d "{\"name\":\"inspect_nearest_container\",\"args\":{\"maxDistance\":6}}"
+```
+
+```bat
+curl -X POST http://127.0.0.1:8787/bots/BlockPilot/actions ^
+  -H "content-type: application/json" ^
+  -d "{\"name\":\"use_nearest_block\",\"args\":{\"blockName\":\"door\",\"maxDistance\":5}}"
+```
+
+```bat
+curl -X POST http://127.0.0.1:8787/bots/BlockPilot/actions ^
+  -H "content-type: application/json" ^
   -d "{\"name\":\"retreat_from_threat\",\"args\":{\"threatX\":0,\"threatY\":64,\"threatZ\":0,\"durationMs\":1200}}"
 ```
 
@@ -219,7 +267,7 @@ Environment variables:
 - `BLOCKPILOT_AGENT_PLANNER`: `rule` or `llm`. Defaults to `rule`.
 - `BLOCKPILOT_AGENT_PREFIX`: in-game command prefix. Defaults to `!bp`.
 - `BLOCKPILOT_AGENT_ALIASES`: comma-separated names players may use for the bot, such as `bp,helper`.
-- `BLOCKPILOT_AGENT_ALLOWED_ACTIONS`: comma-separated action whitelist. Defaults to `chat,follow_player,go_to_position,dig_nearest_block,stop,report_position,world_snapshot,eat_food,retreat_from_threat`.
+- `BLOCKPILOT_AGENT_ALLOWED_ACTIONS`: comma-separated action whitelist. Defaults to `chat,follow_player,go_to_position,dig_nearest_block,place_block,use_nearest_block,inspect_nearest_container,collect_nearest_item,stop,report_position,world_snapshot,eat_food,retreat_from_threat`.
 - `BLOCKPILOT_AGENT_TICK_MS`: polling interval. Defaults to `2000`.
 - `BLOCKPILOT_RESPONSE_DEDUP_MS`: suppress identical bot chat replies within this window. Defaults to `30000`.
 - `BLOCKPILOT_AGENT_DECISION_LOG`: decision log mode: `off`, `console`, `file`, `both`, or `true` for console. Defaults to `off`.
@@ -244,7 +292,7 @@ The agent handles only the newest unprocessed player chat message each tick. Old
 
 Decision logs record each agent tick as structured JSONL events: world summary, safety result, selected chat, planner result, skipped steps, executed actions, action results, and errors. Use `BLOCKPILOT_AGENT_DECISION_LOG=console` while debugging, or `both` to write the JSONL file and also print to the terminal.
 
-The LLM planner receives the bot id, live Minecraft username, configured aliases, current speaker, recent chat, nearby players, current task, perception data, safety state, memory, and available capabilities. The model must first return `addressedToBot`; if the message is for another player or general server chat, the agent ignores it. When the player explicitly asks the bot to remember the current place as home, the LLM planner can request a memory `set_home` operation; when asked to return home it can use `memory.home` with `go_to_position`.
+The LLM planner receives the bot id, live Minecraft username, configured aliases, current speaker, recent chat, nearby players, current task, perception data, safety state, memory, and available capabilities. The model must first return `addressedToBot`; if the message is for another player or general server chat, the agent ignores it. When explaining threats it must use exact hostile mob facts from the snapshot and must not rename one mob type as another. When the player explicitly asks the bot to remember the current place as home, the LLM planner can request a memory `set_home` operation; when asked to return home it can use `memory.home` with `go_to_position`.
 
 LLM planner variables:
 

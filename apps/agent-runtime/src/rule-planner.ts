@@ -12,7 +12,31 @@ type AgentCommand =
       blockName: string;
     }
   | {
-      name: "go_home" | "help" | "home" | "memory" | "set_home" | "status" | "stop" | "where" | "world";
+      name: "use_block";
+      chat: ChatMessageSnapshot;
+      blockName: string;
+    }
+  | {
+      name: "place_block";
+      chat: ChatMessageSnapshot;
+      itemName: string;
+      x: number;
+      y: number;
+      z: number;
+    }
+  | {
+      name:
+        | "collect_item"
+        | "go_home"
+        | "help"
+        | "home"
+        | "inspect_container"
+        | "memory"
+        | "set_home"
+        | "status"
+        | "stop"
+        | "where"
+        | "world";
       chat: ChatMessageSnapshot;
     };
 
@@ -27,6 +51,25 @@ const WHERE_ALIASES = new Set([
   "\u4F60\u5728\u54EA",
 ]);
 const WORLD_ALIASES = new Set(["world", "\u9644\u8FD1", "\u73A9\u5BB6"]);
+const CONTAINER_ALIASES = new Set([
+  "container",
+  "containers",
+  "chest",
+  "inspect container",
+  "inspect chest",
+  "\u7BB1\u5B50",
+  "\u770B\u7BB1\u5B50",
+  "\u4ED3\u5E93",
+  "\u770B\u4ED3\u5E93",
+]);
+const COLLECT_ALIASES = new Set([
+  "collect",
+  "collect item",
+  "pickup",
+  "pickup item",
+  "\u6361\u4E1C\u897F",
+  "\u6361\u6389\u843D\u7269",
+]);
 const HOME_ALIASES = new Set(["home", "base", "\u5BB6", "\u57FA\u5730"]);
 const MEMORY_ALIASES = new Set(["memory", "mem", "\u8BB0\u5FC6"]);
 const SET_HOME_ALIASES = new Set([
@@ -105,6 +148,24 @@ function parseCommand(chat: ChatMessageSnapshot, commandPrefix: string): AgentCo
     return { name: "go_home", chat };
   }
 
+  if (CONTAINER_ALIASES.has(command)) {
+    return { name: "inspect_container", chat };
+  }
+
+  if (COLLECT_ALIASES.has(command)) {
+    return { name: "collect_item", chat };
+  }
+
+  const placeCommand = parsePlaceCommand(command);
+  if (placeCommand) {
+    return { name: "place_block", chat, ...placeCommand };
+  }
+
+  const useBlockName = parseUseBlockName(command);
+  if (useBlockName) {
+    return { name: "use_block", chat, blockName: useBlockName };
+  }
+
   const digBlockName = parseDigBlockName(command);
   if (digBlockName) {
     return { name: "dig", chat, blockName: digBlockName };
@@ -152,6 +213,14 @@ function executeCommand(command: AgentCommand, context: PlannerContext): AgentPl
       return createGoHomePlan(context);
     case "dig":
       return createDigPlan(command, context);
+    case "use_block":
+      return createUseBlockPlan(command, context);
+    case "inspect_container":
+      return createInspectContainerPlan(context);
+    case "collect_item":
+      return createCollectItemPlan(context);
+    case "place_block":
+      return createPlaceBlockPlan(command, context);
     case "follow":
       return addressedPlan([
         {
@@ -190,7 +259,7 @@ function addressedPlan(steps: AgentPlan["steps"]): AgentPlan {
 
 function createHelpMessage(capabilities: BotCapability[], prefix: string): string {
   const names = capabilities.map((capability) => capability.name).sort().join(", ");
-  return `Agent commands: ${prefix} help/status/where/world/follow/stop/home/sethome/go home/memory/dig dirt. Tools: ${names || "none"}.`;
+  return `Agent commands: ${prefix} help/status/where/world/follow/stop/home/sethome/go home/memory/dig dirt/container/use door/collect item/place dirt x y z. Tools: ${names || "none"}.`;
 }
 
 function createPositionMessage(world: WorldSnapshot): string {
@@ -302,6 +371,87 @@ function createDigPlan(command: Extract<AgentCommand, { name: "dig" }>, context:
   ]);
 }
 
+function createUseBlockPlan(command: Extract<AgentCommand, { name: "use_block" }>, context: PlannerContext): AgentPlan {
+  if (!hasCapability(context.world.capabilities, "use_nearest_block")) {
+    return addressedPlan([{ type: "say", message: "I understood the use request, but use_nearest_block is unavailable." }]);
+  }
+
+  return addressedPlan([
+    { type: "say", message: `Using nearby ${command.blockName}.` },
+    {
+      type: "action",
+      action: {
+        name: "use_nearest_block",
+        args: {
+          blockName: command.blockName,
+          maxDistance: 5,
+        },
+      },
+    },
+  ]);
+}
+
+function createInspectContainerPlan(context: PlannerContext): AgentPlan {
+  if (!hasCapability(context.world.capabilities, "inspect_nearest_container")) {
+    return addressedPlan([{ type: "say", message: "I understood the container request, but inspect_nearest_container is unavailable." }]);
+  }
+
+  return addressedPlan([
+    { type: "say", message: "Checking the nearest container." },
+    {
+      type: "action",
+      action: {
+        name: "inspect_nearest_container",
+        args: {
+          maxDistance: 6,
+        },
+      },
+    },
+  ]);
+}
+
+function createCollectItemPlan(context: PlannerContext): AgentPlan {
+  if (!hasCapability(context.world.capabilities, "collect_nearest_item")) {
+    return addressedPlan([{ type: "say", message: "I understood the pickup request, but collect_nearest_item is unavailable." }]);
+  }
+
+  return addressedPlan([
+    { type: "say", message: "Trying to pick up the nearest dropped item." },
+    {
+      type: "action",
+      action: {
+        name: "collect_nearest_item",
+        args: {
+          maxDistance: 16,
+          timeoutMs: 8_000,
+        },
+      },
+    },
+  ]);
+}
+
+function createPlaceBlockPlan(command: Extract<AgentCommand, { name: "place_block" }>, context: PlannerContext): AgentPlan {
+  if (!hasCapability(context.world.capabilities, "place_block")) {
+    return addressedPlan([{ type: "say", message: "I understood the place request, but place_block is unavailable." }]);
+  }
+
+  return addressedPlan([
+    { type: "say", message: `Placing ${command.itemName} at ${command.x}, ${command.y}, ${command.z}.` },
+    {
+      type: "action",
+      action: {
+        name: "place_block",
+        args: {
+          itemName: command.itemName,
+          x: command.x,
+          y: command.y,
+          z: command.z,
+        },
+      },
+    },
+  ]);
+}
+
 function formatPosition(position: { x: number; y: number; z: number }): string {
   return `${position.x}, ${position.y}, ${position.z}`;
 }
@@ -334,6 +484,48 @@ function parseDigBlockName(command: string): string | undefined {
   return normalizeRequestedBlockName(command, false);
 }
 
+function parseUseBlockName(command: string): string | undefined {
+  for (const prefix of ["use ", "activate ", "open ", "press ", "\u7528 ", "\u4F7F\u7528 ", "\u6253\u5F00 ", "\u6309 "]) {
+    if (!command.startsWith(prefix)) {
+      continue;
+    }
+
+    return normalizeRequestedBlockName(command.slice(prefix.length), true);
+  }
+
+  return undefined;
+}
+
+function parsePlaceCommand(command: string): { itemName: string; x: number; y: number; z: number } | undefined {
+  const match = /^(?:place|put|放置|放)\s+([a-z0-9_:\u4e00-\u9fa5]+)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)$/u.exec(command);
+  if (!match?.[1] || !match[2] || !match[3] || !match[4]) {
+    return undefined;
+  }
+
+  return {
+    itemName: normalizePlaceItemName(match[1]),
+    x: Number.parseFloat(match[2]),
+    y: Number.parseFloat(match[3]),
+    z: Number.parseFloat(match[4]),
+  };
+}
+
+function normalizePlaceItemName(value: string): string {
+  const normalized = normalizeSpacing(value).replace(/^minecraft:/u, "").replace(/\s+/gu, "_");
+  switch (normalized) {
+    case "\u6CE5\u571F":
+    case "\u571F":
+      return "dirt";
+    case "\u8349\u65B9\u5757":
+      return "grass_block";
+    case "\u6728\u677F":
+    case "planks":
+      return "oak_planks";
+    default:
+      return normalized;
+  }
+}
+
 function normalizeRequestedBlockName(value: string, allowUnknown: boolean): string | undefined {
   const normalized = normalizeSpacing(value).replace(/^minecraft:/u, "").replace(/\s+/gu, "_");
   switch (normalized) {
@@ -350,6 +542,21 @@ function normalizeRequestedBlockName(value: string, allowUnknown: boolean): stri
     case "\u77F3\u5934":
     case "stone":
       return "stone";
+    case "\u95E8":
+    case "door":
+      return "door";
+    case "\u6309\u94AE":
+    case "button":
+      return "button";
+    case "\u62C9\u6746":
+    case "lever":
+      return "lever";
+    case "\u7BB1\u5B50":
+    case "chest":
+      return "chest";
+    case "\u6728\u677F":
+    case "planks":
+      return "oak_planks";
     default:
       return allowUnknown && normalized ? normalized : undefined;
   }

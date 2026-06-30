@@ -72,7 +72,50 @@ export interface DigNearestBlockAction {
   };
 }
 
-export type BuiltInBotAction = ChatAction | StopAction | FollowPlayerAction | GoToPositionAction | DigNearestBlockAction;
+export interface PlaceBlockAction {
+  name: "place_block";
+  args: {
+    itemName: string;
+    x: number;
+    y: number;
+    z: number;
+  };
+}
+
+export interface UseNearestBlockAction {
+  name: "use_nearest_block";
+  args: {
+    blockName: string;
+    maxDistance?: number;
+  };
+}
+
+export interface InspectNearestContainerAction {
+  name: "inspect_nearest_container";
+  args?: {
+    maxDistance?: number;
+  };
+}
+
+export interface CollectNearestItemAction {
+  name: "collect_nearest_item";
+  args?: {
+    itemName?: string;
+    maxDistance?: number;
+    timeoutMs?: number;
+  };
+}
+
+export type BuiltInBotAction =
+  | ChatAction
+  | StopAction
+  | FollowPlayerAction
+  | GoToPositionAction
+  | DigNearestBlockAction
+  | PlaceBlockAction
+  | UseNearestBlockAction
+  | InspectNearestContainerAction
+  | CollectNearestItemAction;
 
 export interface BotCapabilityParameterSchema {
   type: "string" | "number" | "boolean";
@@ -179,6 +222,7 @@ export interface SafetyThreatSnapshot {
   position?: Vec3Like;
   distance?: number;
   trapped?: boolean;
+  containmentReason?: string;
   canReachBot?: boolean;
 }
 

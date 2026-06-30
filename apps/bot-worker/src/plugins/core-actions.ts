@@ -6,8 +6,10 @@ import {
   type WorkerPlugin,
 } from "../plugin-runtime.js";
 import type { Bot } from "mineflayer";
+import { Vec3 } from "vec3";
 
 type MineflayerBlock = NonNullable<ReturnType<Bot["blockAt"]>>;
+type MineflayerEntity = Bot["entity"];
 
 const FOOD_ITEM_NAMES = [
   "cooked_beef",
@@ -33,6 +35,24 @@ const FOOD_ITEM_NAMES = [
   "dried_kelp",
   "golden_apple",
   "enchanted_golden_apple",
+];
+const CONTAINER_BLOCK_NAMES = new Set([
+  "barrel",
+  "chest",
+  "dispenser",
+  "dropper",
+  "hopper",
+  "shulker_box",
+  "trapped_chest",
+]);
+const AIR_BLOCK_NAMES = new Set(["air", "cave_air", "void_air"]);
+const PLACE_FACES = [
+  { offset: new Vec3(0, -1, 0), face: new Vec3(0, 1, 0) },
+  { offset: new Vec3(0, 1, 0), face: new Vec3(0, -1, 0) },
+  { offset: new Vec3(-1, 0, 0), face: new Vec3(1, 0, 0) },
+  { offset: new Vec3(1, 0, 0), face: new Vec3(-1, 0, 0) },
+  { offset: new Vec3(0, 0, -1), face: new Vec3(0, 0, 1) },
+  { offset: new Vec3(0, 0, 1), face: new Vec3(0, 0, -1) },
 ];
 
 export const coreActionsPlugin: WorkerPlugin = {
@@ -197,6 +217,231 @@ export const coreActionsPlugin: WorkerPlugin = {
           data: {
             count: dug.length,
             blockName: [...blockNames].join(","),
+          },
+        };
+      },
+    );
+
+    ctx.actions.register(
+      {
+        name: "place_block",
+        description: "Place an inventory block item at an exact world coordinate.",
+        source: "builtin",
+        parameters: {
+          type: "object",
+          properties: {
+            itemName: {
+              type: "string",
+              description: "Inventory item name to place, such as dirt or oak_planks.",
+            },
+            x: {
+              type: "number",
+              description: "Target x coordinate where the new block should appear.",
+            },
+            y: {
+              type: "number",
+              description: "Target y coordinate where the new block should appear.",
+            },
+            z: {
+              type: "number",
+              description: "Target z coordinate where the new block should appear.",
+            },
+          },
+          required: ["itemName", "x", "y", "z"],
+          additionalProperties: false,
+        },
+      },
+      async (action) => {
+        const bot = ctx.minecraft.requireBot();
+        const itemName = normalizeBlockName(requireStringArg(action, "itemName"));
+        const x = Math.floor(requireNumberArg(action, "x"));
+        const y = Math.floor(requireNumberArg(action, "y"));
+        const z = Math.floor(requireNumberArg(action, "z"));
+        const item = findInventoryItem(bot, itemName);
+        if (!item) {
+          throw new Error(`No inventory item '${itemName}' found`);
+        }
+
+        const placement = findPlacementReference(bot, new Vec3(x, y, z));
+        if (!placement) {
+          throw new Error(`No adjacent reference block found for placement at ${x}, ${y}, ${z}`);
+        }
+
+        ctx.minecraft.stopCurrentControls(`Placing ${itemName} at ${x},${y},${z}`);
+        await bot.equip(item, "hand");
+        await bot.lookAt(new Vec3(x + 0.5, y + 0.5, z + 0.5), true);
+        await bot.placeBlock(placement.referenceBlock, placement.faceVector);
+
+        return {
+          ok: true,
+          message: `Placed ${itemName} at ${x}, ${y}, ${z}`,
+          data: {
+            itemName,
+            x,
+            y,
+            z,
+          },
+        };
+      },
+    );
+
+    ctx.actions.register(
+      {
+        name: "use_nearest_block",
+        description: "Activate a nearby block, such as a door, button, lever, chest, furnace, or crafting table.",
+        source: "builtin",
+        parameters: {
+          type: "object",
+          properties: {
+            blockName: {
+              type: "string",
+              description: "Minecraft block name or comma-separated names. Use door, lever, button, chest, furnace, crafting_table, etc.",
+            },
+            maxDistance: {
+              type: "number",
+              description: "Maximum search distance in blocks.",
+              default: 5,
+              minimum: 1,
+              maximum: 16,
+            },
+          },
+          required: ["blockName"],
+          additionalProperties: false,
+        },
+      },
+      async (action) => {
+        const bot = ctx.minecraft.requireBot();
+        const blockNames = parseBlockNames(requireStringArg(action, "blockName"));
+        const maxDistance = clamp(getOptionalNumberArg(action, "maxDistance") ?? 5, 1, 16);
+        const block = findNearestBlock(bot, blockNames, maxDistance);
+        if (!block) {
+          throw new Error(`No block found for '${[...blockNames].join(",")}' within ${maxDistance} blocks`);
+        }
+
+        ctx.minecraft.stopCurrentControls(`Using ${block.name}`);
+        await bot.activateBlock(block);
+
+        return {
+          ok: true,
+          message: `Used ${block.name}`,
+          data: {
+            blockName: block.name,
+            x: block.position.x,
+            y: block.position.y,
+            z: block.position.z,
+          },
+        };
+      },
+    );
+
+    ctx.actions.register(
+      {
+        name: "inspect_nearest_container",
+        description: "Open the nearest container and summarize visible items without moving them.",
+        source: "builtin",
+        parameters: {
+          type: "object",
+          properties: {
+            maxDistance: {
+              type: "number",
+              description: "Maximum search distance in blocks.",
+              default: 6,
+              minimum: 1,
+              maximum: 16,
+            },
+          },
+          additionalProperties: false,
+        },
+      },
+      async (action) => {
+        const bot = ctx.minecraft.requireBot();
+        const maxDistance = clamp(getOptionalNumberArg(action, "maxDistance") ?? 6, 1, 16);
+        const block = findNearestBlock(bot, CONTAINER_BLOCK_NAMES, maxDistance);
+        if (!block) {
+          throw new Error(`No container found within ${maxDistance} blocks`);
+        }
+
+        ctx.minecraft.stopCurrentControls(`Inspecting ${block.name}`);
+        const container = await bot.openContainer(block);
+        try {
+          const items = container.containerItems().map((item) => ({
+            name: item.name,
+            displayName: item.displayName,
+            count: item.count,
+            slot: item.slot,
+          }));
+
+          return {
+            ok: true,
+            message: items.length === 0 ? `${block.name} is empty` : `${block.name} contains ${items.length} item stack(s)`,
+            data: {
+              blockName: block.name,
+              x: block.position.x,
+              y: block.position.y,
+              z: block.position.z,
+              items,
+            },
+          };
+        } finally {
+          container.close();
+        }
+      },
+    );
+
+    ctx.actions.register(
+      {
+        name: "collect_nearest_item",
+        description: "Move to the nearest dropped item and try to pick it up.",
+        source: "builtin",
+        parameters: {
+          type: "object",
+          properties: {
+            itemName: {
+              type: "string",
+              description: "Optional dropped item entity name to prefer.",
+            },
+            maxDistance: {
+              type: "number",
+              description: "Maximum search distance in blocks.",
+              default: 16,
+              minimum: 1,
+              maximum: 32,
+            },
+            timeoutMs: {
+              type: "number",
+              description: "Maximum time to wait for pickup.",
+              default: 8000,
+              minimum: 500,
+              maximum: 15000,
+            },
+          },
+          additionalProperties: false,
+        },
+      },
+      async (action) => {
+        const bot = ctx.minecraft.requireBot();
+        const itemName = getOptionalStringArg(action, "itemName");
+        const maxDistance = clamp(getOptionalNumberArg(action, "maxDistance") ?? 16, 1, 32);
+        const timeoutMs = clamp(getOptionalNumberArg(action, "timeoutMs") ?? 8_000, 500, 15_000);
+        const target = findNearestItemEntity(bot, itemName, maxDistance);
+        if (!target) {
+          throw new Error(`No dropped item found within ${maxDistance} blocks`);
+        }
+
+        const startPosition = target.position.clone();
+        await ctx.minecraft.goToPosition(startPosition.x, startPosition.y, startPosition.z, 1);
+        const pickedUp = await waitForItemPickup(bot, target.id, timeoutMs);
+
+        return {
+          ok: true,
+          message: pickedUp ? "Collected dropped item" : "Moved to dropped item; pickup not confirmed",
+          data: {
+            entityId: target.id,
+            itemName: target.name ?? "item",
+            pickedUp,
+            x: startPosition.x,
+            y: startPosition.y,
+            z: startPosition.z,
           },
         };
       },
@@ -392,26 +637,122 @@ function expandBlockName(name: string): string[] {
     case "wood":
     case "log":
       return ["oak_log", "spruce_log", "birch_log", "jungle_log", "acacia_log", "dark_oak_log", "mangrove_log", "cherry_log"];
+    case "container":
+      return ["barrel", "chest", "trapped_chest", "shulker_box"];
+    case "door":
+      return ["door"];
+    case "button":
+      return ["button"];
+    case "lever":
+      return ["lever"];
     default:
       return [name];
   }
 }
 
 function findNearestDiggableBlock(bot: Bot, names: Set<string>, maxDistance: number): MineflayerBlock | undefined {
+  return findNearestBlock(bot, names, maxDistance, (block) => bot.canDigBlock(block));
+}
+
+function findNearestBlock(
+  bot: Bot,
+  names: Set<string>,
+  maxDistance: number,
+  predicate: (block: MineflayerBlock) => boolean = () => true,
+): MineflayerBlock | undefined {
   const positions = bot.findBlocks({
     point: bot.entity.position,
-    matching: (block) => names.has(block.name),
+    matching: (block) => matchesBlockName(block.name, names),
     maxDistance,
-    count: 64,
+    count: 128,
   });
 
-  const blocks = positions
+  return positions
     .map((position) => bot.blockAt(position))
     .filter((block): block is MineflayerBlock => Boolean(block))
-    .filter((block) => bot.canDigBlock(block))
-    .sort((a, b) => a.position.distanceTo(bot.entity.position) - b.position.distanceTo(bot.entity.position));
+    .filter(predicate)
+    .sort((a, b) => a.position.distanceTo(bot.entity.position) - b.position.distanceTo(bot.entity.position))[0];
+}
 
-  return blocks[0];
+function matchesBlockName(blockName: string, names: Set<string>): boolean {
+  if (names.has(blockName)) {
+    return true;
+  }
+
+  if (names.has("door") && blockName.endsWith("_door")) {
+    return true;
+  }
+
+  if (names.has("trapdoor") && blockName.endsWith("_trapdoor")) {
+    return true;
+  }
+
+  if (names.has("button") && blockName.endsWith("_button")) {
+    return true;
+  }
+
+  if (names.has("pressure_plate") && blockName.endsWith("_pressure_plate")) {
+    return true;
+  }
+
+  if (names.has("shulker_box") && blockName.endsWith("_shulker_box")) {
+    return true;
+  }
+
+  return false;
+}
+
+function findInventoryItem(bot: Bot, itemName: string): ReturnType<Bot["inventory"]["items"]>[number] | undefined {
+  return bot.inventory.items().find((item) => item.name === itemName || item.displayName?.toLowerCase() === itemName);
+}
+
+function findPlacementReference(
+  bot: Bot,
+  targetPosition: Vec3,
+): { referenceBlock: MineflayerBlock; faceVector: Vec3 } | undefined {
+  const targetBlock = bot.blockAt(targetPosition);
+  if (targetBlock && !AIR_BLOCK_NAMES.has(targetBlock.name)) {
+    throw new Error(`Target position already contains ${targetBlock.name}`);
+  }
+
+  for (const face of PLACE_FACES) {
+    const referenceBlock = bot.blockAt(targetPosition.plus(face.offset));
+    if (!referenceBlock || AIR_BLOCK_NAMES.has(referenceBlock.name) || referenceBlock.boundingBox === "empty") {
+      continue;
+    }
+
+    return {
+      referenceBlock,
+      faceVector: face.face,
+    };
+  }
+
+  return undefined;
+}
+
+function findNearestItemEntity(bot: Bot, itemName: string | undefined, maxDistance: number): MineflayerEntity | undefined {
+  const normalizedItemName = itemName ? normalizeBlockName(itemName) : undefined;
+  const candidates = Object.values(bot.entities)
+    .filter((entity) => entity.name === "item" || entity.type === "object")
+    .filter((entity) => entity.position.distanceTo(bot.entity.position) <= maxDistance)
+    .sort((a, b) => a.position.distanceTo(bot.entity.position) - b.position.distanceTo(bot.entity.position));
+  const preferred = normalizedItemName
+    ? candidates.filter((entity) => entity.displayName?.toLowerCase() === normalizedItemName || entity.name === normalizedItemName)
+    : [];
+  return preferred[0] ?? candidates[0];
+}
+
+async function waitForItemPickup(bot: Bot, entityId: number, timeoutMs: number): Promise<boolean> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (!bot.entities[entityId]) {
+      return true;
+    }
+
+    await sleep(250);
+  }
+
+  return !bot.entities[entityId];
 }
 
 function clamp(value: number, min: number, max: number): number {
