@@ -225,7 +225,7 @@ async function handleHttpRequest(request: IncomingMessage, response: ServerRespo
     if (!action) {
       sendJson(response, 400, {
         error:
-          "Invalid action. Use {\"name\":\"chat\",\"args\":{\"message\":\"hello\"}}, {\"name\":\"follow_player\",\"args\":{\"playerName\":\"Steve\"}}, {\"name\":\"dig_nearest_block\",\"args\":{\"blockName\":\"dirt\"}}, {\"name\":\"inspect_nearest_container\",\"args\":{}}, or {\"name\":\"stop\"}.",
+          "Invalid action. Use {\"name\":\"chat\",\"args\":{\"message\":\"hello\"}}, {\"name\":\"follow_player\",\"args\":{\"playerName\":\"Steve\"}}, {\"name\":\"dig_nearest_block\",\"args\":{\"blockName\":\"dirt\",\"x\":1,\"y\":64,\"z\":1}}, {\"name\":\"inspect_nearest_container\",\"args\":{}}, or {\"name\":\"stop\"}.",
       });
       return;
     }
@@ -372,6 +372,7 @@ function createFallbackWorldSnapshot(session: WorkerSession): WorldSnapshot {
       others: [],
     },
     blocks: {
+      nearbyDiggableBlocks: [],
       nearbyUtilityBlocks: [],
       nearbyDangerBlocks: [],
       nearbyContainers: [],

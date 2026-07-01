@@ -1,4 +1,4 @@
-import type { BotAction, DangerLevel, SafetyThreatSnapshot, WorldSnapshot } from "@blockpilot/core";
+import { asErrorMessage, type BotAction, type DangerLevel, type SafetyThreatSnapshot, type WorldSnapshot } from "@blockpilot/core";
 import type { GatewayClient } from "./gateway-client.js";
 
 export interface SafetyReflexConfig {
@@ -61,7 +61,12 @@ export class SafetyReflex {
     }
 
     this.lastActionAt = now;
-    await this.client.runAction(reaction.action);
+    try {
+      await this.client.runAction(reaction.action);
+    } catch (error) {
+      console.warn(`[agent-runtime] safety action '${reaction.action.name}' failed: ${asErrorMessage(error)}`);
+      return false;
+    }
 
     if (
       this.config.noticeEnabled &&

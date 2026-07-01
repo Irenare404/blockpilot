@@ -196,9 +196,25 @@ export class ChatAgent {
         const result = await this.client.runAction(step.action);
         this.log("step.result", { tickId, step: compactStep(step), result });
       } catch (error) {
-        this.log("step.error", { tickId, step: compactStep(step), error: asErrorMessage(error) });
-        throw error;
+        const message = asErrorMessage(error);
+        this.log("step.error", { tickId, step: compactStep(step), error: message });
+        console.warn(`[agent-runtime] action '${step.action.name}' failed: ${message}`);
+        await this.notifyActionFailure(step.action.name, message, world, tickId);
+        break;
       }
+    }
+  }
+
+  private async notifyActionFailure(actionName: string, errorMessage: string, world: WorldSnapshot, tickId: string): Promise<void> {
+    try {
+      await this.sendChatMessage(createActionFailureReply(actionName, errorMessage), world, tickId, "action_error");
+    } catch (notifyError) {
+      this.log("step.skipped", {
+        tickId,
+        source: "action_error",
+        reason: "failure_reply_unavailable",
+        error: asErrorMessage(notifyError),
+      });
     }
   }
 
@@ -333,6 +349,7 @@ function compactWorld(world: WorldSnapshot): Record<string, unknown> {
       others: world.entities.others.slice(0, 4),
     },
     blocks: {
+      nearbyDiggableBlocks: world.blocks.nearbyDiggableBlocks.slice(0, 8),
       nearbyUtilityBlocks: world.blocks.nearbyUtilityBlocks.slice(0, 8),
       nearbyDangerBlocks: world.blocks.nearbyDangerBlocks.slice(0, 8),
       nearbyContainers: world.blocks.nearbyContainers.slice(0, 8),
@@ -348,6 +365,28 @@ function compactWorld(world: WorldSnapshot): Record<string, unknown> {
     },
     safety: world.safety,
   };
+}
+
+function createActionFailureReply(actionName: string, errorMessage: string): string {
+  const cleaned = cleanActionErrorMessage(errorMessage);
+  if (actionName === "dig_nearest_block" && cleaned.startsWith("No diggable block found")) {
+    return `我附近没找到可挖的目标：${cleaned}`;
+  }
+
+  if (actionName === "attack_nearest_entity" && cleaned.startsWith("No attack target found")) {
+    return `我附近没找到能打的目标：${cleaned}`;
+  }
+
+  return `这步没成：${cleaned}`;
+}
+
+function cleanActionErrorMessage(errorMessage: string): string {
+  const workerErrorMatch = /"error"\s*:\s*"([^"]+)"/u.exec(errorMessage);
+  const raw = workerErrorMatch?.[1] ?? errorMessage;
+  return raw
+    .replace(/^Action '[^']+' failed:\s*/u, "")
+    .replace(/^Gateway request failed \d+:\s*/u, "")
+    .trim();
 }
 
 function compactMemory(memory: AgentMemorySnapshot): Record<string, unknown> {

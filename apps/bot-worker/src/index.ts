@@ -62,6 +62,7 @@ interface WorkerConfig {
 
 const ENTITY_SCAN_RADIUS = 32;
 const BLOCK_SCAN_RADIUS = 12;
+const DIGGABLE_BLOCK_SCAN_RADIUS = 8;
 const HOSTILE_ENTITY_NAMES = new Set([
   "blaze",
   "bogged",
@@ -143,6 +144,7 @@ const PASSIVE_ENTITY_NAMES = new Set([
   "wandering_trader",
   "wolf",
 ]);
+const AIR_BLOCK_NAMES = new Set(["air", "cave_air", "void_air"]);
 const ITEM_ENTITY_NAMES = new Set(["item", "experience_orb"]);
 const CONTAINER_BLOCK_NAMES = new Set([
   "barrel",
@@ -811,6 +813,7 @@ function createBlockSnapshots(): WorldSnapshot["blocks"] {
   const activeBot = bot;
   const botPosition = activeBot?.entity?.position;
   const blocks: WorldSnapshot["blocks"] = {
+    nearbyDiggableBlocks: [],
     nearbyUtilityBlocks: [],
     nearbyDangerBlocks: [],
     nearbyContainers: [],
@@ -851,11 +854,29 @@ function createBlockSnapshots(): WorldSnapshot["blocks"] {
     }
   }
 
+  const diggablePositions = activeBot.findBlocks({
+    point: botPosition,
+    matching: (block) => isDiggableSnapshotBlock(activeBot, block),
+    maxDistance: DIGGABLE_BLOCK_SCAN_RADIUS,
+    count: 160,
+  });
+
+  for (const position of diggablePositions) {
+    const block = activeBot.blockAt(position);
+    if (!block || !isDiggableSnapshotBlock(activeBot, block)) {
+      continue;
+    }
+
+    blocks.nearbyDiggableBlocks.push(createBlockSnapshot(block, "diggable", botPosition));
+  }
+
+  sortByDistance(blocks.nearbyDiggableBlocks);
   sortByDistance(blocks.nearbyUtilityBlocks);
   sortByDistance(blocks.nearbyDangerBlocks);
   sortByDistance(blocks.nearbyContainers);
   sortByDistance(blocks.nearbySpawners);
 
+  blocks.nearbyDiggableBlocks = dedupeBlocks(blocks.nearbyDiggableBlocks).slice(0, 48);
   blocks.nearbyUtilityBlocks = blocks.nearbyUtilityBlocks.slice(0, 24);
   blocks.nearbyDangerBlocks = blocks.nearbyDangerBlocks.slice(0, 24);
   blocks.nearbyContainers = blocks.nearbyContainers.slice(0, 24);
@@ -1152,6 +1173,14 @@ function isTrackedBlock(name: string): boolean {
   return isUtilityBlock(name) || isDangerBlock(name) || isContainerBlock(name) || isSpawnerBlock(name);
 }
 
+function isDiggableSnapshotBlock(activeBot: Bot, block: MineflayerBlock): boolean {
+  return (
+    !AIR_BLOCK_NAMES.has(block.name) &&
+    !isTrackedBlock(block.name) &&
+    activeBot.canDigBlock(block)
+  );
+}
+
 function isUtilityBlock(name: string): boolean {
   return UTILITY_BLOCK_NAMES.has(name) || name.endsWith("_bed") || name === "bed";
 }
@@ -1182,6 +1211,23 @@ function distanceBetween(left: SnapshotVec3, right: SnapshotVec3): number {
 
 function sortByDistance<T extends { distance?: number }>(values: T[]): void {
   values.sort((a, b) => (a.distance ?? Number.POSITIVE_INFINITY) - (b.distance ?? Number.POSITIVE_INFINITY));
+}
+
+function dedupeBlocks<T extends { name: string; position: SnapshotVec3 }>(blocks: T[]): T[] {
+  const seen = new Set<string>();
+  const deduped: T[] = [];
+
+  for (const block of blocks) {
+    const key = `${block.name}:${block.position.x}:${block.position.y}:${block.position.z}`;
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    deduped.push(block);
+  }
+
+  return deduped;
 }
 
 function createStatus(): BotStatus {

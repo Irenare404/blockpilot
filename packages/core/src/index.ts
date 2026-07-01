@@ -71,6 +71,9 @@ export interface DigNearestBlockAction {
     count?: number;
     settleMs?: number;
     waitForDropMs?: number;
+    x?: number;
+    y?: number;
+    z?: number;
   };
 }
 
@@ -89,6 +92,9 @@ export interface UseNearestBlockAction {
   args: {
     blockName: string;
     maxDistance?: number;
+    x?: number;
+    y?: number;
+    z?: number;
   };
 }
 
@@ -96,15 +102,22 @@ export interface InspectNearestContainerAction {
   name: "inspect_nearest_container";
   args?: {
     maxDistance?: number;
+    x?: number;
+    y?: number;
+    z?: number;
   };
 }
 
 export interface CollectNearestItemAction {
   name: "collect_nearest_item";
   args?: {
+    entityId?: number;
     itemName?: string;
     maxDistance?: number;
     timeoutMs?: number;
+    x?: number;
+    y?: number;
+    z?: number;
   };
 }
 
@@ -120,11 +133,15 @@ export interface DropItemAction {
 export interface AttackNearestEntityAction {
   name: "attack_nearest_entity";
   args?: {
+    entityId?: number;
     targetName?: string;
     maxDistance?: number;
     allowPlayers?: boolean;
     allowTrapped?: boolean;
     follow?: boolean;
+    x?: number;
+    y?: number;
+    z?: number;
   };
 }
 
@@ -197,7 +214,7 @@ export interface WorldEntitiesSnapshot {
   others: WorldEntitySnapshot[];
 }
 
-export type WorldBlockKind = "container" | "utility" | "danger" | "spawner";
+export type WorldBlockKind = "container" | "danger" | "diggable" | "spawner" | "utility";
 
 export interface WorldBlockSnapshot {
   name: string;
@@ -208,6 +225,7 @@ export interface WorldBlockSnapshot {
 }
 
 export interface WorldBlocksSnapshot {
+  nearbyDiggableBlocks: WorldBlockSnapshot[];
   nearbyUtilityBlocks: WorldBlockSnapshot[];
   nearbyDangerBlocks: WorldBlockSnapshot[];
   nearbyContainers: WorldBlockSnapshot[];

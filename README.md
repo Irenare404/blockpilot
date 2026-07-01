@@ -108,7 +108,7 @@ The world snapshot includes:
 
 - bot status, current task, recent tasks, nearby players, and recent chat
 - nearby entities grouped into hostile mobs, animals, dropped items, and others
-- nearby utility blocks, danger blocks, containers, and spawners
+- nearby diggable blocks, utility blocks, danger blocks, containers, and spawners
 - bot inventory, held item, and basic equipment
 - a safety assessment with `safe`, `watch`, `danger`, or `critical`
 
@@ -144,7 +144,15 @@ curl -X POST http://127.0.0.1:8787/bots/BlockPilot/actions \
   -d "{\"name\":\"dig_nearest_block\",\"args\":{\"blockName\":\"dirt,grass_block\",\"maxDistance\":6,\"count\":1}}"
 ```
 
-`dig_nearest_block` waits for each dug block to change, gives nearby drops a short moment to appear, and then settles before selecting the next block.
+Dig an exact visible block:
+
+```bash
+curl -X POST http://127.0.0.1:8787/bots/BlockPilot/actions \
+  -H "content-type: application/json" \
+  -d "{\"name\":\"dig_nearest_block\",\"args\":{\"blockName\":\"snow\",\"x\":16,\"y\":66,\"z\":10,\"maxDistance\":8}}"
+```
+
+`dig_nearest_block` waits for each dug block to change, gives nearby drops a short moment to appear, and then settles before selecting the next block. When `x`, `y`, and `z` are provided, it digs that exact block instead of picking the nearest match.
 
 Place a block at a coordinate:
 
@@ -169,6 +177,8 @@ curl -X POST http://127.0.0.1:8787/bots/BlockPilot/actions \
   -H "content-type: application/json" \
   -d "{\"name\":\"inspect_nearest_container\",\"args\":{\"maxDistance\":6}}"
 ```
+
+Most block/entity actions accept exact targets when available from `/bots/BlockPilot/world`: `dig_nearest_block`, `use_nearest_block`, and `inspect_nearest_container` accept `x,y,z`; `collect_nearest_item` and `attack_nearest_entity` accept `entityId` plus optional `x,y,z`; `drop_item` accepts an inventory `slot`.
 
 Collect a nearby dropped item:
 
@@ -326,6 +336,8 @@ Autonomy runs only when enabled, the bot can chat, no current task is active, an
 The agent handles only the newest unprocessed player chat message each tick. Older queued chat is marked handled to avoid delayed duplicate-looking replies after safety reflexes or slow LLM calls.
 
 Decision logs record each agent tick as structured JSONL events: world summary, safety result, selected chat, planner result, skipped steps, executed actions, action results, and errors. Use `BLOCKPILOT_AGENT_DECISION_LOG=console` while debugging, or `both` to write the JSONL file and also print to the terminal.
+
+Action failures are contained inside the agent tick. If a worker action cannot find a target, the agent records a step error and can send a short in-game failure reply instead of repeatedly printing a full `tick failed` 502 body.
 
 The agent has an in-process task queue for short multi-step goals. Queued tasks run one step at a time when no new player chat is waiting, the worker has no active task, and safety is not `danger` or `critical`. Current rule-planner task tests are `!bp task collect`, `!bp task storage`, and `!bp patrol`.
 

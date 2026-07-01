@@ -249,6 +249,18 @@ export const coreActionsPlugin: WorkerPlugin = {
               minimum: 0,
               maximum: 5000,
             },
+            x: {
+              type: "number",
+              description: "Optional exact block x coordinate to dig.",
+            },
+            y: {
+              type: "number",
+              description: "Optional exact block y coordinate to dig.",
+            },
+            z: {
+              type: "number",
+              description: "Optional exact block z coordinate to dig.",
+            },
           },
           required: ["blockName"],
           additionalProperties: false,
@@ -261,12 +273,16 @@ export const coreActionsPlugin: WorkerPlugin = {
         const count = Math.floor(clamp(getOptionalNumberArg(action, "count") ?? 1, 1, 16));
         const settleMs = Math.floor(clamp(getOptionalNumberArg(action, "settleMs") ?? 300, 0, 3_000));
         const waitForDropMs = Math.floor(clamp(getOptionalNumberArg(action, "waitForDropMs") ?? 700, 0, 5_000));
+        const exactPosition = getOptionalBlockPositionArg(action);
+        const targetCount = exactPosition ? 1 : count;
         const dug: string[] = [];
 
         ctx.minecraft.stopCurrentControls(`Digging ${[...blockNames].join(",")}`);
 
-        for (let index = 0; index < count; index += 1) {
-          const block = findNearestDiggableBlock(bot, blockNames, maxDistance);
+        for (let index = 0; index < targetCount; index += 1) {
+          const block = exactPosition
+            ? resolveExactBlock(bot, exactPosition, blockNames, maxDistance, (candidate) => bot.canDigBlock(candidate), "diggable")
+            : findNearestDiggableBlock(bot, blockNames, maxDistance);
           if (!block) {
             break;
           }
@@ -294,6 +310,7 @@ export const coreActionsPlugin: WorkerPlugin = {
             blockName: [...blockNames].join(","),
             settleMs,
             waitForDropMs,
+            ...(exactPosition ? toPositionData(exactPosition) : {}),
           },
         };
       },
@@ -381,6 +398,18 @@ export const coreActionsPlugin: WorkerPlugin = {
               minimum: 1,
               maximum: 16,
             },
+            x: {
+              type: "number",
+              description: "Optional exact block x coordinate to use.",
+            },
+            y: {
+              type: "number",
+              description: "Optional exact block y coordinate to use.",
+            },
+            z: {
+              type: "number",
+              description: "Optional exact block z coordinate to use.",
+            },
           },
           required: ["blockName"],
           additionalProperties: false,
@@ -390,7 +419,10 @@ export const coreActionsPlugin: WorkerPlugin = {
         const bot = ctx.minecraft.requireBot();
         const blockNames = parseBlockNames(requireStringArg(action, "blockName"));
         const maxDistance = clamp(getOptionalNumberArg(action, "maxDistance") ?? 5, 1, 16);
-        const block = findNearestBlock(bot, blockNames, maxDistance);
+        const exactPosition = getOptionalBlockPositionArg(action);
+        const block = exactPosition
+          ? resolveExactBlock(bot, exactPosition, blockNames, maxDistance, () => true, "usable")
+          : findNearestBlock(bot, blockNames, maxDistance);
         if (!block) {
           throw new Error(`No block found for '${[...blockNames].join(",")}' within ${maxDistance} blocks`);
         }
@@ -426,6 +458,18 @@ export const coreActionsPlugin: WorkerPlugin = {
               minimum: 1,
               maximum: 16,
             },
+            x: {
+              type: "number",
+              description: "Optional exact container block x coordinate to inspect.",
+            },
+            y: {
+              type: "number",
+              description: "Optional exact container block y coordinate to inspect.",
+            },
+            z: {
+              type: "number",
+              description: "Optional exact container block z coordinate to inspect.",
+            },
           },
           additionalProperties: false,
         },
@@ -433,7 +477,10 @@ export const coreActionsPlugin: WorkerPlugin = {
       async (action) => {
         const bot = ctx.minecraft.requireBot();
         const maxDistance = clamp(getOptionalNumberArg(action, "maxDistance") ?? 6, 1, 16);
-        const block = findNearestBlock(bot, CONTAINER_BLOCK_NAMES, maxDistance);
+        const exactPosition = getOptionalBlockPositionArg(action);
+        const block = exactPosition
+          ? resolveExactBlock(bot, exactPosition, CONTAINER_BLOCK_NAMES, maxDistance, () => true, "container")
+          : findNearestBlock(bot, CONTAINER_BLOCK_NAMES, maxDistance);
         if (!block) {
           throw new Error(`No container found within ${maxDistance} blocks`);
         }
@@ -473,6 +520,10 @@ export const coreActionsPlugin: WorkerPlugin = {
         parameters: {
           type: "object",
           properties: {
+            entityId: {
+              type: "number",
+              description: "Optional exact dropped item entity id to collect.",
+            },
             itemName: {
               type: "string",
               description: "Optional dropped item entity name to prefer.",
@@ -491,6 +542,18 @@ export const coreActionsPlugin: WorkerPlugin = {
               minimum: 500,
               maximum: 15000,
             },
+            x: {
+              type: "number",
+              description: "Optional dropped item x coordinate to prefer.",
+            },
+            y: {
+              type: "number",
+              description: "Optional dropped item y coordinate to prefer.",
+            },
+            z: {
+              type: "number",
+              description: "Optional dropped item z coordinate to prefer.",
+            },
           },
           additionalProperties: false,
         },
@@ -498,9 +561,11 @@ export const coreActionsPlugin: WorkerPlugin = {
       async (action) => {
         const bot = ctx.minecraft.requireBot();
         const itemName = getOptionalStringArg(action, "itemName");
+        const entityId = getOptionalNumberArg(action, "entityId");
+        const exactPosition = getOptionalPositionArg(action);
         const maxDistance = clamp(getOptionalNumberArg(action, "maxDistance") ?? 16, 1, 32);
         const timeoutMs = clamp(getOptionalNumberArg(action, "timeoutMs") ?? 8_000, 500, 15_000);
-        const target = findNearestItemEntity(bot, itemName, maxDistance);
+        const target = findNearestItemEntity(bot, itemName, maxDistance, entityId, exactPosition);
         if (!target) {
           throw new Error(`No dropped item found within ${maxDistance} blocks`);
         }
@@ -589,6 +654,10 @@ export const coreActionsPlugin: WorkerPlugin = {
         parameters: {
           type: "object",
           properties: {
+            entityId: {
+              type: "number",
+              description: "Optional exact entity id to attack.",
+            },
             targetName: {
               type: "string",
               description: "Optional entity name, such as zombie, creeper, hostile, monster, or mob.",
@@ -615,6 +684,18 @@ export const coreActionsPlugin: WorkerPlugin = {
               description: "Move toward the target before attacking if it is outside melee range.",
               default: true,
             },
+            x: {
+              type: "number",
+              description: "Optional target x coordinate to prefer.",
+            },
+            y: {
+              type: "number",
+              description: "Optional target y coordinate to prefer.",
+            },
+            z: {
+              type: "number",
+              description: "Optional target z coordinate to prefer.",
+            },
           },
           additionalProperties: false,
         },
@@ -622,12 +703,14 @@ export const coreActionsPlugin: WorkerPlugin = {
       async (action) => {
         const bot = ctx.minecraft.requireBot();
         const world = ctx.world.getSnapshot();
+        const entityId = getOptionalNumberArg(action, "entityId");
+        const exactPosition = getOptionalPositionArg(action);
         const targetName = getOptionalStringArg(action, "targetName");
         const maxDistance = clamp(getOptionalNumberArg(action, "maxDistance") ?? 8, 1, 32);
         const allowPlayers = getOptionalBooleanArg(action, "allowPlayers") ?? false;
         const allowTrapped = getOptionalBooleanArg(action, "allowTrapped") ?? false;
         const follow = getOptionalBooleanArg(action, "follow") ?? true;
-        const target = findNearestAttackTarget(bot, world, targetName, maxDistance, allowPlayers, allowTrapped);
+        const target = findNearestAttackTarget(bot, world, targetName, maxDistance, allowPlayers, allowTrapped, entityId, exactPosition);
         if (!target) {
           throw new Error(`No attack target found within ${maxDistance} blocks`);
         }
@@ -832,6 +915,35 @@ function requireNumberArg(action: Parameters<typeof getArgs>[0], key: string): n
   return value;
 }
 
+function getOptionalPositionArg(action: Parameters<typeof getArgs>[0]): Vec3 | undefined {
+  const x = getOptionalNumberArg(action, "x");
+  const y = getOptionalNumberArg(action, "y");
+  const z = getOptionalNumberArg(action, "z");
+  const hasAny = x !== undefined || y !== undefined || z !== undefined;
+  if (!hasAny) {
+    return undefined;
+  }
+
+  if (x === undefined || y === undefined || z === undefined) {
+    throw new Error(`Action '${action.name}' requires x, y, and z together for exact targeting`);
+  }
+
+  return new Vec3(x, y, z);
+}
+
+function getOptionalBlockPositionArg(action: Parameters<typeof getArgs>[0]): Vec3 | undefined {
+  const position = getOptionalPositionArg(action);
+  return position ? new Vec3(Math.floor(position.x), Math.floor(position.y), Math.floor(position.z)) : undefined;
+}
+
+function toPositionData(position: Vec3): { x: number; y: number; z: number } {
+  return {
+    x: position.x,
+    y: position.y,
+    z: position.z,
+  };
+}
+
 function parseBlockNames(value: string): Set<string> {
   const names = value
     .split(",")
@@ -873,6 +985,37 @@ function expandBlockName(name: string): string[] {
 
 function findNearestDiggableBlock(bot: Bot, names: Set<string>, maxDistance: number): MineflayerBlock | undefined {
   return findNearestBlock(bot, names, maxDistance, (block) => bot.canDigBlock(block));
+}
+
+function resolveExactBlock(
+  bot: Bot,
+  position: Vec3,
+  names: Set<string>,
+  maxDistance: number,
+  predicate: (block: MineflayerBlock) => boolean,
+  expectedKind: string,
+): MineflayerBlock {
+  const block = bot.blockAt(position);
+  if (!block) {
+    throw new Error(`No block loaded at ${position.x}, ${position.y}, ${position.z}`);
+  }
+
+  if (!matchesBlockName(block.name, names)) {
+    throw new Error(
+      `Block at ${position.x}, ${position.y}, ${position.z} is '${block.name}', not '${[...names].join(",")}'`,
+    );
+  }
+
+  const distance = block.position.distanceTo(bot.entity.position);
+  if (distance > maxDistance) {
+    throw new Error(`Block '${block.name}' at ${position.x}, ${position.y}, ${position.z} is ${distance.toFixed(1)} blocks away`);
+  }
+
+  if (!predicate(block)) {
+    throw new Error(`Block '${block.name}' at ${position.x}, ${position.y}, ${position.z} is not ${expectedKind}`);
+  }
+
+  return block;
 }
 
 function findNearestBlock(
@@ -982,16 +1125,48 @@ function findNearestAttackTarget(
   maxDistance: number,
   allowPlayers: boolean,
   allowTrapped: boolean,
+  entityId: number | undefined,
+  exactPosition: Vec3 | undefined,
 ): MineflayerEntity | undefined {
   const normalizedTargetName = targetName ? normalizeEntityOrItemAlias(targetName) : undefined;
+
+  if (typeof entityId === "number" && Number.isFinite(entityId)) {
+    const entity = bot.entities[Math.floor(entityId)];
+    return entity && isValidAttackTarget(bot, world, entity, normalizedTargetName, maxDistance, allowPlayers, allowTrapped, exactPosition)
+      ? entity
+      : undefined;
+  }
+
   return Object.values(bot.entities)
     .filter((entity) => entity.id !== bot.entity.id)
     .filter((entity) => entity.isValid !== false)
     .filter((entity) => entity.position.distanceTo(bot.entity.position) <= maxDistance)
+    .filter((entity) => !exactPosition || entity.position.distanceTo(exactPosition) <= 2.5)
     .filter((entity) => allowPlayers || !isPlayerEntity(entity))
     .filter((entity) => matchesAttackTarget(entity, normalizedTargetName))
     .filter((entity) => allowTrapped || !isContainedThreat(bot, entity, world))
     .sort((a, b) => a.position.distanceTo(bot.entity.position) - b.position.distanceTo(bot.entity.position))[0];
+}
+
+function isValidAttackTarget(
+  bot: Bot,
+  world: WorldSnapshot,
+  entity: MineflayerEntity,
+  targetName: string | undefined,
+  maxDistance: number,
+  allowPlayers: boolean,
+  allowTrapped: boolean,
+  exactPosition: Vec3 | undefined,
+): boolean {
+  return (
+    entity.id !== bot.entity.id &&
+    entity.isValid !== false &&
+    entity.position.distanceTo(bot.entity.position) <= maxDistance &&
+    (!exactPosition || entity.position.distanceTo(exactPosition) <= 2.5) &&
+    (allowPlayers || !isPlayerEntity(entity)) &&
+    matchesAttackTarget(entity, targetName) &&
+    (allowTrapped || !isContainedThreat(bot, entity, world))
+  );
 }
 
 function matchesAttackTarget(entity: MineflayerEntity, targetName: string | undefined): boolean {
@@ -1074,16 +1249,48 @@ function normalizeEntityOrItemAlias(value: string): string {
   }
 }
 
-function findNearestItemEntity(bot: Bot, itemName: string | undefined, maxDistance: number): MineflayerEntity | undefined {
-  const normalizedItemName = itemName ? normalizeBlockName(itemName) : undefined;
+function findNearestItemEntity(
+  bot: Bot,
+  itemName: string | undefined,
+  maxDistance: number,
+  entityId: number | undefined,
+  exactPosition: Vec3 | undefined,
+): MineflayerEntity | undefined {
+  const normalizedItemName = itemName ? normalizeEntityOrItemAlias(itemName) : undefined;
+
+  if (typeof entityId === "number" && Number.isFinite(entityId)) {
+    const entity = bot.entities[Math.floor(entityId)];
+    return entity && isValidItemEntity(bot, entity, normalizedItemName, maxDistance, exactPosition) ? entity : undefined;
+  }
+
   const candidates = Object.values(bot.entities)
-    .filter((entity) => entity.name === "item" || entity.type === "object")
-    .filter((entity) => entity.position.distanceTo(bot.entity.position) <= maxDistance)
+    .filter((entity) => isValidItemEntity(bot, entity, normalizedItemName, maxDistance, exactPosition))
     .sort((a, b) => a.position.distanceTo(bot.entity.position) - b.position.distanceTo(bot.entity.position));
-  const preferred = normalizedItemName
-    ? candidates.filter((entity) => entity.displayName?.toLowerCase() === normalizedItemName || entity.name === normalizedItemName)
-    : [];
-  return preferred[0] ?? candidates[0];
+  return candidates[0];
+}
+
+function isValidItemEntity(
+  bot: Bot,
+  entity: MineflayerEntity,
+  itemName: string | undefined,
+  maxDistance: number,
+  exactPosition: Vec3 | undefined,
+): boolean {
+  return (
+    (entity.name === "item" || entity.type === "object") &&
+    entity.position.distanceTo(bot.entity.position) <= maxDistance &&
+    (!exactPosition || entity.position.distanceTo(exactPosition) <= 2.5) &&
+    (!itemName || getItemEntityNameCandidates(entity).some((candidate) => normalizeEntityOrItemAlias(candidate) === itemName))
+  );
+}
+
+function getItemEntityNameCandidates(entity: MineflayerEntity): string[] {
+  const droppedItem = entity.getDroppedItem();
+  return [
+    ...getEntityNameCandidates(entity),
+    droppedItem?.name,
+    droppedItem?.displayName,
+  ].filter(isString);
 }
 
 async function waitForItemPickup(bot: Bot, entityId: number, timeoutMs: number): Promise<boolean> {
