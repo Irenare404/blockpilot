@@ -8,7 +8,10 @@ import {
 } from "../plugin-runtime.js";
 import type { SafetyThreatSnapshot, WorldSnapshot } from "@blockpilot/core";
 import type { Bot } from "mineflayer";
-import { Vec3 } from "vec3";
+import type { Vec3 as Vec3Type } from "vec3";
+import vec3Package from "vec3";
+
+const { Vec3 } = vec3Package;
 
 type MineflayerBlock = NonNullable<ReturnType<Bot["blockAt"]>>;
 type MineflayerEntity = Bot["entity"];
@@ -915,7 +918,7 @@ function requireNumberArg(action: Parameters<typeof getArgs>[0], key: string): n
   return value;
 }
 
-function getOptionalPositionArg(action: Parameters<typeof getArgs>[0]): Vec3 | undefined {
+function getOptionalPositionArg(action: Parameters<typeof getArgs>[0]): Vec3Type | undefined {
   const x = getOptionalNumberArg(action, "x");
   const y = getOptionalNumberArg(action, "y");
   const z = getOptionalNumberArg(action, "z");
@@ -931,12 +934,12 @@ function getOptionalPositionArg(action: Parameters<typeof getArgs>[0]): Vec3 | u
   return new Vec3(x, y, z);
 }
 
-function getOptionalBlockPositionArg(action: Parameters<typeof getArgs>[0]): Vec3 | undefined {
+function getOptionalBlockPositionArg(action: Parameters<typeof getArgs>[0]): Vec3Type | undefined {
   const position = getOptionalPositionArg(action);
   return position ? new Vec3(Math.floor(position.x), Math.floor(position.y), Math.floor(position.z)) : undefined;
 }
 
-function toPositionData(position: Vec3): { x: number; y: number; z: number } {
+function toPositionData(position: Vec3Type): { x: number; y: number; z: number } {
   return {
     x: position.x,
     y: position.y,
@@ -989,7 +992,7 @@ function findNearestDiggableBlock(bot: Bot, names: Set<string>, maxDistance: num
 
 function resolveExactBlock(
   bot: Bot,
-  position: Vec3,
+  position: Vec3Type,
   names: Set<string>,
   maxDistance: number,
   predicate: (block: MineflayerBlock) => boolean,
@@ -1096,8 +1099,8 @@ function matchesItemName(item: MineflayerItem, itemName: string): boolean {
 
 function findPlacementReference(
   bot: Bot,
-  targetPosition: Vec3,
-): { referenceBlock: MineflayerBlock; faceVector: Vec3 } | undefined {
+  targetPosition: Vec3Type,
+): { referenceBlock: MineflayerBlock; faceVector: Vec3Type } | undefined {
   const targetBlock = bot.blockAt(targetPosition);
   if (targetBlock && !AIR_BLOCK_NAMES.has(targetBlock.name)) {
     throw new Error(`Target position already contains ${targetBlock.name}`);
@@ -1126,7 +1129,7 @@ function findNearestAttackTarget(
   allowPlayers: boolean,
   allowTrapped: boolean,
   entityId: number | undefined,
-  exactPosition: Vec3 | undefined,
+  exactPosition: Vec3Type | undefined,
 ): MineflayerEntity | undefined {
   const normalizedTargetName = targetName ? normalizeEntityOrItemAlias(targetName) : undefined;
 
@@ -1156,7 +1159,7 @@ function isValidAttackTarget(
   maxDistance: number,
   allowPlayers: boolean,
   allowTrapped: boolean,
-  exactPosition: Vec3 | undefined,
+  exactPosition: Vec3Type | undefined,
 ): boolean {
   return (
     entity.id !== bot.entity.id &&
@@ -1254,7 +1257,7 @@ function findNearestItemEntity(
   itemName: string | undefined,
   maxDistance: number,
   entityId: number | undefined,
-  exactPosition: Vec3 | undefined,
+  exactPosition: Vec3Type | undefined,
 ): MineflayerEntity | undefined {
   const normalizedItemName = itemName ? normalizeEntityOrItemAlias(itemName) : undefined;
 
@@ -1274,7 +1277,7 @@ function isValidItemEntity(
   entity: MineflayerEntity,
   itemName: string | undefined,
   maxDistance: number,
-  exactPosition: Vec3 | undefined,
+  exactPosition: Vec3Type | undefined,
 ): boolean {
   return (
     (entity.name === "item" || entity.type === "object") &&
@@ -1321,7 +1324,7 @@ async function waitForBlockToChange(bot: Bot, block: MineflayerBlock, timeoutMs:
   return !current || current.name !== block.name || AIR_BLOCK_NAMES.has(current.name);
 }
 
-async function waitForNearbyDroppedItem(bot: Bot, position: Vec3, timeoutMs: number): Promise<boolean> {
+async function waitForNearbyDroppedItem(bot: Bot, position: Vec3Type, timeoutMs: number): Promise<boolean> {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
     const droppedItem = Object.values(bot.entities).some(
