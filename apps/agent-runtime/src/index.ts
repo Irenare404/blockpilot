@@ -103,6 +103,11 @@ process.once("SIGTERM", () => {
 console.log(`[agent-runtime] starting for bot '${config.botId}'`);
 console.log(`[agent-runtime] gateway: ${config.gatewayHttpUrl}`);
 console.log(`[agent-runtime] planner: ${config.plannerKind}`);
+if (config.llm) {
+  console.log(
+    `[agent-runtime] llm: ${config.llm.model} at ${config.llm.baseUrl} (timeout ${config.llm.timeoutMs}ms, temperature ${config.llm.temperature})`,
+  );
+}
 console.log(`[agent-runtime] command prefix: ${config.commandPrefix}`);
 console.log(`[agent-runtime] aliases: ${config.aliases.join(", ") || "none"}`);
 console.log(`[agent-runtime] allowed actions: ${config.allowedActionNames.join(", ")}`);
@@ -159,7 +164,7 @@ function readConfig(): AgentConfig {
       process.env.BLOCKPILOT_AGENT_ALLOWED_ACTIONS,
       "chat,follow_player,go_to_position,dig_nearest_block,place_block,use_nearest_block,inspect_nearest_container,collect_nearest_item,drop_item,attack_nearest_entity,stop,report_position,world_snapshot,eat_food,retreat_from_threat",
     ),
-    responseDedupMs: readInteger(process.env.BLOCKPILOT_RESPONSE_DEDUP_MS, 30_000),
+    responseDedupMs: readNonNegativeInteger(process.env.BLOCKPILOT_RESPONSE_DEDUP_MS, 30_000),
     decisionLog: {
       mode: readDecisionLogMode(process.env.BLOCKPILOT_AGENT_DECISION_LOG, "off"),
       filePath: readNonEmptyString(process.env.BLOCKPILOT_AGENT_DECISION_LOG_FILE, createDefaultDecisionLogPath(botId)),
@@ -206,7 +211,7 @@ function readLlmConfig(): NonNullable<AgentConfig["llm"]> {
     apiKey,
     model,
     temperature: readNumber(process.env.BLOCKPILOT_LLM_TEMPERATURE, 0.2),
-    timeoutMs: readInteger(process.env.BLOCKPILOT_LLM_TIMEOUT_MS, 15_000),
+    timeoutMs: readInteger(process.env.BLOCKPILOT_LLM_TIMEOUT_MS, 30_000),
   };
 }
 

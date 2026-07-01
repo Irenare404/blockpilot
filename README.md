@@ -314,7 +314,7 @@ Environment variables:
 - `BLOCKPILOT_AGENT_ALIASES`: comma-separated names players may use for the bot, such as `bp,helper`.
 - `BLOCKPILOT_AGENT_ALLOWED_ACTIONS`: comma-separated action whitelist. Defaults to `chat,follow_player,go_to_position,dig_nearest_block,place_block,use_nearest_block,inspect_nearest_container,collect_nearest_item,drop_item,attack_nearest_entity,stop,report_position,world_snapshot,eat_food,retreat_from_threat`.
 - `BLOCKPILOT_AGENT_TICK_MS`: polling interval. Defaults to `2000`.
-- `BLOCKPILOT_RESPONSE_DEDUP_MS`: suppress identical bot chat replies within this window. Defaults to `30000`.
+- `BLOCKPILOT_RESPONSE_DEDUP_MS`: suppress identical bot chat replies within this window; set to `0` while debugging to disable suppression. Defaults to `30000`.
 - `BLOCKPILOT_AGENT_DECISION_LOG`: decision log mode: `off`, `console`, `file`, `both`, or `true` for console. Defaults to `off`.
 - `BLOCKPILOT_AGENT_DECISION_LOG_FILE`: JSONL decision log path. Defaults to `.blockpilot/logs/<botId>-decisions.jsonl`.
 - `BLOCKPILOT_MEMORY_FILE`: JSON file for persistent agent memory. Defaults to `.blockpilot/memory/<botId>.json`.
@@ -338,7 +338,7 @@ Autonomy runs only when enabled, the bot can chat, no current task is active, an
 
 The agent handles only the newest unprocessed player chat message each tick. Older queued chat is marked handled to avoid delayed duplicate-looking replies after safety reflexes or slow LLM calls.
 
-Decision logs record each agent tick as structured JSONL events: world summary, safety result, selected chat, planner result, skipped steps, executed actions, action results, and errors. Use `BLOCKPILOT_AGENT_DECISION_LOG=console` while debugging, or `both` to write the JSONL file and also print to the terminal.
+Decision logs record each agent tick as structured JSONL events: world summary, safety result, selected chat, planner result or planner error, skipped steps, executed actions, action results, and errors. Use `BLOCKPILOT_AGENT_DECISION_LOG=console` while debugging, or `both` to write the JSONL file and also print to the terminal.
 
 Action failures are contained inside the agent tick. If a worker action cannot find a target, the agent records a step error and can send a short in-game failure reply instead of repeatedly printing a full `tick failed` 502 body.
 
@@ -352,7 +352,7 @@ LLM planner variables:
 - `BLOCKPILOT_LLM_BASE_URL`: endpoint base URL. Defaults to `https://api.openai.com/v1`.
 - `BLOCKPILOT_LLM_MODEL`: model name. Required for `BLOCKPILOT_AGENT_PLANNER=llm`.
 - `BLOCKPILOT_LLM_TEMPERATURE`: defaults to `0.2`.
-- `BLOCKPILOT_LLM_TIMEOUT_MS`: defaults to `15000`.
+- `BLOCKPILOT_LLM_TIMEOUT_MS`: defaults to `30000`. If the provider is slow, increase this; planner timeouts are reported as `LLM planner timed out after ...ms`.
 
 For `cmd.exe`, start the LLM planner like this:
 

@@ -46,7 +46,11 @@ export class LlmPlanner implements AgentPlanner {
 
   private async completeJson(context: PlannerContext, promptInput: unknown): Promise<string> {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.config.timeoutMs);
+    let timedOut = false;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, this.config.timeoutMs);
 
     try {
       const response = await fetch(`${this.config.baseUrl}/chat/completions`, {
@@ -88,11 +92,19 @@ export class LlmPlanner implements AgentPlanner {
 
       return content;
     } catch (error) {
+      if (timedOut || isAbortError(error)) {
+        throw new Error(`LLM planner timed out after ${this.config.timeoutMs}ms`);
+      }
+
       throw new Error(`LLM planner failed: ${asErrorMessage(error)}`);
     } finally {
       clearTimeout(timeout);
     }
   }
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && (error.name === "AbortError" || error.message.toLowerCase().includes("aborted"));
 }
 
 function createSystemPrompt(context: PlannerContext): string {

@@ -119,7 +119,18 @@ export class ChatAgent {
       context.tasks = taskSnapshots;
     }
 
-    const plan = await this.planner.plan(context);
+    let plan: AgentPlan;
+    try {
+      plan = await this.planner.plan(context);
+    } catch (error) {
+      this.log("planner.error", {
+        tickId,
+        chat: compactChat(nextChat),
+        error: asErrorMessage(error),
+      });
+      throw error;
+    }
+
     this.log("planner.result", {
       tickId,
       chat: compactChat(nextChat),
@@ -259,6 +270,10 @@ export class ChatAgent {
   }
 
   private isDuplicateReply(message: string): boolean {
+    if (this.config.responseDedupMs <= 0) {
+      return false;
+    }
+
     const key = normalizeReply(message);
     const now = Date.now();
     this.pruneRecentReplies(now);
