@@ -60,6 +60,8 @@ export interface GoToPositionAction {
     y: number;
     z: number;
     range?: number;
+    waitForArrival?: boolean;
+    timeoutMs?: number;
   };
 }
 
@@ -71,6 +73,7 @@ export interface DigNearestBlockAction {
     count?: number;
     settleMs?: number;
     waitForDropMs?: number;
+    confirmTimeoutMs?: number;
     x?: number;
     y?: number;
     z?: number;
@@ -84,6 +87,7 @@ export interface PlaceBlockAction {
     x: number;
     y: number;
     z: number;
+    confirmTimeoutMs?: number;
   };
 }
 
@@ -139,6 +143,7 @@ export interface AttackNearestEntityAction {
     allowPlayers?: boolean;
     allowTrapped?: boolean;
     follow?: boolean;
+    confirmTimeoutMs?: number;
     x?: number;
     y?: number;
     z?: number;

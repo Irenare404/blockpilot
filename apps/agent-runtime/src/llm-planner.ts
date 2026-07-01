@@ -112,6 +112,7 @@ function createSystemPrompt(context: PlannerContext): string {
     "Use world entities, blocks, self, and safety to reason about the world before choosing actions.",
     "Prefer exact targets over vague nearest-target actions. When the snapshot provides coordinates, entityId, or inventory slot, include those exact fields in the action args.",
     "For block actions, use x, y, z from world.blocks whenever possible. For entity actions, use entityId and position from world.entities whenever possible. For inventory actions, use slot when known.",
+    "Many actions now report confirmation evidence such as confirmed, arrived, pickedUp, damaged, targetGone, or inventoryConfirmed. Do not claim a task is fully done unless the chosen action can confirm the relevant world, entity, or inventory state; for uncertain actions, use humble wording like trying, checking, or attempted.",
     "When explaining danger, only mention hostile mob names that appear in world.safety.threats or world.entities.mobs. Never replace one mob type with another.",
     "If a player asks why you did not run from a specific mob, answer from the exact safety threat facts: severity, trapped, canReachBot, distance, and reason. If the mob is not visible in the snapshot, say you do not currently see it.",
     "Use memory.home, memory.places, memory.players, and memory.recentObservations as long-term context.",

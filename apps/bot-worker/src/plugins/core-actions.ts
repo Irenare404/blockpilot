@@ -224,6 +224,18 @@ export const coreActionsPlugin: WorkerPlugin = {
               minimum: 0,
               maximum: 8,
             },
+            waitForArrival: {
+              type: "boolean",
+              description: "Wait until the bot is actually within range before returning.",
+              default: true,
+            },
+            timeoutMs: {
+              type: "number",
+              description: "Maximum time to wait for arrival when waitForArrival is true.",
+              default: 12000,
+              minimum: 500,
+              maximum: 60000,
+            },
           },
           required: ["x", "y", "z"],
           additionalProperties: false,
@@ -234,7 +246,16 @@ export const coreActionsPlugin: WorkerPlugin = {
         const y = requireNumberArg(action, "y");
         const z = requireNumberArg(action, "z");
         const range = getOptionalNumberArg(action, "range");
-        return ctx.minecraft.goToPosition(x, y, z, range);
+        const waitForArrival = getOptionalBooleanArg(action, "waitForArrival");
+        const timeoutMs = getOptionalNumberArg(action, "timeoutMs");
+        const options: { timeoutMs?: number; waitForArrival?: boolean } = {};
+        if (timeoutMs !== undefined) {
+          options.timeoutMs = timeoutMs;
+        }
+        if (waitForArrival !== undefined) {
+          options.waitForArrival = waitForArrival;
+        }
+        return ctx.minecraft.goToPosition(x, y, z, range, options);
       },
     );
 
@@ -278,6 +299,12 @@ export const coreActionsPlugin: WorkerPlugin = {
               minimum: 0,
               maximum: 5000,
             },
+            confirmTimeoutMs: {
+              type: "number",
+              description: "Maximum time to wait for the target block to disappear or change after digging.",
+              minimum: 500,
+              maximum: 30000,
+            },
             x: {
               type: "number",
               description: "Optional exact block x coordinate to dig.",
@@ -302,9 +329,10 @@ export const coreActionsPlugin: WorkerPlugin = {
         const count = Math.floor(clamp(getOptionalNumberArg(action, "count") ?? 1, 1, 16));
         const settleMs = Math.floor(clamp(getOptionalNumberArg(action, "settleMs") ?? 300, 0, 3_000));
         const waitForDropMs = Math.floor(clamp(getOptionalNumberArg(action, "waitForDropMs") ?? 700, 0, 5_000));
+        const confirmTimeoutMs = getOptionalNumberArg(action, "confirmTimeoutMs");
         const exactPosition = getOptionalBlockPositionArg(action);
         const targetCount = exactPosition ? 1 : count;
-        const dug: string[] = [];
+        const dug: Array<{ name: string; x: number; y: number; z: number }> = [];
 
         ctx.minecraft.stopCurrentControls(`Digging ${[...blockNames].join(",")}`);
 
@@ -316,15 +344,25 @@ export const coreActionsPlugin: WorkerPlugin = {
             break;
           }
 
-          await bot.dig(block);
-          await waitForBlockToChange(bot, block, 3_000);
+          const timeoutMs = getDigConfirmationTimeoutMs(bot, block, confirmTimeoutMs);
+          await bot.dig(block, true);
+          const confirmed = await waitForBlockToChange(bot, block, timeoutMs);
+          if (!confirmed) {
+            const position = toPositionData(block.position);
+            throw new Error(
+              `Dig did not break '${block.name}' at ${position.x}, ${position.y}, ${position.z} within ${timeoutMs}ms`,
+            );
+          }
           if (waitForDropMs > 0) {
             await waitForNearbyDroppedItem(bot, block.position, waitForDropMs);
           }
           if (settleMs > 0) {
             await sleep(settleMs);
           }
-          dug.push(block.name);
+          dug.push({
+            name: block.name,
+            ...toPositionData(block.position),
+          });
         }
 
         if (dug.length === 0) {
@@ -333,12 +371,15 @@ export const coreActionsPlugin: WorkerPlugin = {
 
         return {
           ok: true,
-          message: `Dug ${dug.length} block(s): ${dug.join(", ")}`,
+          message: `Dug ${dug.length} confirmed block(s): ${dug.map((item) => item.name).join(", ")}`,
           data: {
             count: dug.length,
             blockName: [...blockNames].join(","),
+            confirmed: true,
+            blocks: dug,
             settleMs,
             waitForDropMs,
+            ...(confirmTimeoutMs === undefined ? {} : { confirmTimeoutMs }),
             ...(exactPosition ? toPositionData(exactPosition) : {}),
           },
         };
@@ -369,6 +410,13 @@ export const coreActionsPlugin: WorkerPlugin = {
               type: "number",
               description: "Target z coordinate where the new block should appear.",
             },
+            confirmTimeoutMs: {
+              type: "number",
+              description: "Maximum time to wait for the target position to contain the placed block.",
+              default: 3000,
+              minimum: 500,
+              maximum: 15000,
+            },
           },
           required: ["itemName", "x", "y", "z"],
           additionalProperties: false,
@@ -380,12 +428,14 @@ export const coreActionsPlugin: WorkerPlugin = {
         const x = Math.floor(requireNumberArg(action, "x"));
         const y = Math.floor(requireNumberArg(action, "y"));
         const z = Math.floor(requireNumberArg(action, "z"));
+        const confirmTimeoutMs = clamp(getOptionalNumberArg(action, "confirmTimeoutMs") ?? 3_000, 500, 15_000);
         const item = findInventoryItem(bot, itemName);
         if (!item) {
           throw new Error(`No inventory item '${itemName}' found`);
         }
 
-        const placement = findPlacementReference(bot, new Vec3(x, y, z));
+        const targetPosition = new Vec3(x, y, z);
+        const placement = findPlacementReference(bot, targetPosition);
         if (!placement) {
           throw new Error(`No adjacent reference block found for placement at ${x}, ${y}, ${z}`);
         }
@@ -394,15 +444,22 @@ export const coreActionsPlugin: WorkerPlugin = {
         await bot.equip(item, "hand");
         await bot.lookAt(new Vec3(x + 0.5, y + 0.5, z + 0.5), true);
         await bot.placeBlock(placement.referenceBlock, placement.faceVector);
+        const placedBlock = await waitForPlacedBlock(bot, targetPosition, confirmTimeoutMs);
+        if (!placedBlock) {
+          throw new Error(`Place did not create a block at ${x}, ${y}, ${z} within ${confirmTimeoutMs}ms`);
+        }
 
         return {
           ok: true,
-          message: `Placed ${itemName} at ${x}, ${y}, ${z}`,
+          message: `Placed ${placedBlock.name} at ${x}, ${y}, ${z}`,
           data: {
             itemName,
+            blockName: placedBlock.name,
+            confirmed: true,
             x,
             y,
             z,
+            confirmTimeoutMs,
           },
         };
       },
@@ -457,13 +514,19 @@ export const coreActionsPlugin: WorkerPlugin = {
         }
 
         ctx.minecraft.stopCurrentControls(`Using ${block.name}`);
+        const beforeState = getBlockStateSignature(block);
         await bot.activateBlock(block);
+        await sleep(250);
+        const afterBlock = bot.blockAt(block.position);
+        const afterState = afterBlock ? getBlockStateSignature(afterBlock) : "missing";
+        const confirmed = beforeState !== afterState;
 
         return {
           ok: true,
-          message: `Used ${block.name}`,
+          message: confirmed ? `Used ${block.name}` : `Activated ${block.name}; state change not confirmed`,
           data: {
             blockName: block.name,
+            confirmed,
             x: block.position.x,
             y: block.position.y,
             z: block.position.z,
@@ -529,6 +592,7 @@ export const coreActionsPlugin: WorkerPlugin = {
             message: items.length === 0 ? `${block.name} is empty` : `${block.name} contains ${items.length} item stack(s)`,
             data: {
               blockName: block.name,
+              confirmed: true,
               x: block.position.x,
               y: block.position.y,
               z: block.position.z,
@@ -600,16 +664,31 @@ export const coreActionsPlugin: WorkerPlugin = {
         }
 
         const startPosition = target.position.clone();
-        await ctx.minecraft.goToPosition(startPosition.x, startPosition.y, startPosition.z, 1);
+        const droppedItem = target.getDroppedItem();
+        const droppedItemName = droppedItem?.name;
+        const beforeInventoryCount = droppedItemName ? countInventoryItemsByName(bot, droppedItemName) : undefined;
+        await ctx.minecraft.goToPosition(startPosition.x, startPosition.y, startPosition.z, 1, {
+          timeoutMs,
+          waitForArrival: true,
+        });
         const pickedUp = await waitForItemPickup(bot, target.id, timeoutMs);
+        const inventoryConfirmed =
+          beforeInventoryCount === undefined || !droppedItemName
+            ? pickedUp
+            : countInventoryItemsByName(bot, droppedItemName) > beforeInventoryCount;
+        if (!pickedUp || !inventoryConfirmed) {
+          throw new Error(`Dropped item '${droppedItemName ?? target.name ?? "item"}' was not confirmed picked up within ${timeoutMs}ms`);
+        }
 
         return {
           ok: true,
-          message: pickedUp ? "Collected dropped item" : "Moved to dropped item; pickup not confirmed",
+          message: "Collected dropped item",
           data: {
             entityId: target.id,
-            itemName: target.name ?? "item",
+            itemName: droppedItemName ?? target.name ?? "item",
             pickedUp,
+            confirmed: true,
+            inventoryConfirmed,
             x: startPosition.x,
             y: startPosition.y,
             z: startPosition.z,
@@ -658,13 +737,19 @@ export const coreActionsPlugin: WorkerPlugin = {
         }
 
         const dropCount = Math.min(count, item.count);
+        const beforeCount = countInventoryItemsByType(bot, item.type);
         ctx.minecraft.stopCurrentControls(`Dropping ${dropCount} ${item.name}`);
         await bot.toss(item.type, null, dropCount);
+        const confirmed = await waitForInventoryCountAtMost(bot, item.type, beforeCount - dropCount, 2_000);
+        if (!confirmed) {
+          throw new Error(`Drop did not reduce inventory count for '${item.name}' within 2000ms`);
+        }
 
         const data = {
           itemName: item.name,
           count: dropCount,
           slot: item.slot,
+          confirmed: true,
         };
 
         return {
@@ -713,6 +798,13 @@ export const coreActionsPlugin: WorkerPlugin = {
               description: "Move toward the target before attacking if it is outside melee range.",
               default: true,
             },
+            confirmTimeoutMs: {
+              type: "number",
+              description: "Maximum time to wait for target damage or removal after attacking.",
+              default: 1200,
+              minimum: 200,
+              maximum: 5000,
+            },
             x: {
               type: "number",
               description: "Optional target x coordinate to prefer.",
@@ -739,6 +831,7 @@ export const coreActionsPlugin: WorkerPlugin = {
         const allowPlayers = getOptionalBooleanArg(action, "allowPlayers") ?? false;
         const allowTrapped = getOptionalBooleanArg(action, "allowTrapped") ?? false;
         const follow = getOptionalBooleanArg(action, "follow") ?? true;
+        const confirmTimeoutMs = clamp(getOptionalNumberArg(action, "confirmTimeoutMs") ?? 1_200, 200, 5_000);
         const target = findNearestAttackTarget(bot, world, targetName, maxDistance, allowPlayers, allowTrapped, entityId, exactPosition);
         if (!target) {
           throw new Error(`No attack target found within ${maxDistance} blocks`);
@@ -749,7 +842,9 @@ export const coreActionsPlugin: WorkerPlugin = {
         ctx.minecraft.stopCurrentControls(`Preparing to attack ${label}`);
 
         if (follow && startingDistance > 3.2) {
-          await ctx.minecraft.goToPosition(target.position.x, target.position.y, target.position.z, 2);
+          await ctx.minecraft.goToPosition(target.position.x, target.position.y, target.position.z, 2, {
+            waitForArrival: false,
+          });
           await waitForEntityDistance(bot, target.id, 3.2, Math.min(6_000, 1_000 + maxDistance * 400));
         }
 
@@ -765,16 +860,23 @@ export const coreActionsPlugin: WorkerPlugin = {
 
         ctx.minecraft.stopCurrentControls(`Attacking ${label}`);
         await bot.lookAt(currentTarget.position.offset(0, Math.max(0.5, currentTarget.height * 0.8), 0), true);
+        const initialHealth = getEntityHealth(currentTarget);
         bot.attack(currentTarget);
-        await sleep(250);
+        const attackConfirmation = await waitForAttackConfirmation(bot, currentTarget.id, initialHealth, confirmTimeoutMs);
 
         return {
           ok: true,
-          message: `Attacked ${label}`,
+          message: attackConfirmation.confirmed ? `Attacked ${label}` : `Attacked ${label}; hit not confirmed`,
           data: {
             entityId: currentTarget.id,
             targetName: getEntityName(currentTarget),
             distance: Math.round(attackDistance * 10) / 10,
+            confirmed: attackConfirmation.confirmed,
+            damaged: attackConfirmation.damaged,
+            targetGone: attackConfirmation.targetGone,
+            initialHealth: initialHealth ?? null,
+            currentHealth: attackConfirmation.currentHealth ?? null,
+            confirmTimeoutMs,
           },
         };
       },
@@ -841,6 +943,7 @@ export const coreActionsPlugin: WorkerPlugin = {
           message: `Ate ${food.displayName ?? food.name}`,
           data: {
             itemName: food.name,
+            confirmed: true,
           },
         };
       },
@@ -893,10 +996,12 @@ export const coreActionsPlugin: WorkerPlugin = {
         const threatX = getOptionalNumberArg(action, "threatX");
         const threatY = getOptionalNumberArg(action, "threatY");
         const threatZ = getOptionalNumberArg(action, "threatZ");
+        const hasThreatPosition = typeof threatX === "number" && typeof threatY === "number" && typeof threatZ === "number";
+        const startingThreatDistance = hasThreatPosition ? horizontalDistance(bot.entity.position, threatX, threatZ) : undefined;
 
         ctx.minecraft.stopCurrentControls(getOptionalStringArg(action, "reason") ?? "Retreating from threat");
 
-        if (typeof threatX === "number" && typeof threatY === "number" && typeof threatZ === "number") {
+        if (hasThreatPosition) {
           const position = bot.entity.position;
           const dx = position.x - threatX;
           const dz = position.z - threatZ;
@@ -917,12 +1022,24 @@ export const coreActionsPlugin: WorkerPlugin = {
 
         await sleep(durationMs);
         bot.clearControlStates();
+        const endingThreatDistance = hasThreatPosition ? horizontalDistance(bot.entity.position, threatX, threatZ) : undefined;
+        const confirmed =
+          startingThreatDistance !== undefined && endingThreatDistance !== undefined
+            ? endingThreatDistance > startingThreatDistance + 0.25
+            : false;
+
+        if (hasThreatPosition && !confirmed) {
+          throw new Error(`Retreat did not increase distance from threat within ${durationMs}ms`);
+        }
 
         return {
           ok: true,
-          message: "Retreated from threat",
+          message: confirmed ? "Retreated from threat" : "Retreat controls applied; movement not confirmed",
           data: {
             durationMs,
+            confirmed,
+            ...(startingThreatDistance === undefined ? {} : { startingThreatDistance }),
+            ...(endingThreatDistance === undefined ? {} : { endingThreatDistance }),
           },
         };
       },
@@ -1349,6 +1466,146 @@ function getItemEntityNameCandidates(entity: MineflayerEntity): string[] {
     droppedItem?.name,
     droppedItem?.displayName,
   ].filter(isString);
+}
+
+function getDigConfirmationTimeoutMs(bot: Bot, block: MineflayerBlock, overrideMs: number | undefined): number {
+  if (typeof overrideMs === "number" && Number.isFinite(overrideMs)) {
+    return Math.floor(clamp(overrideMs, 500, 30_000));
+  }
+
+  const digTimeMs = getBlockDigTimeMs(bot, block);
+  const fallbackMs = isLogBlockName(block.name) ? 8_000 : 4_000;
+  return Math.floor(clamp((digTimeMs ?? fallbackMs) + 2_500, 3_000, 30_000));
+}
+
+function getBlockDigTimeMs(bot: Bot, block: MineflayerBlock): number | undefined {
+  const maybeBot = bot as Bot & {
+    digTime?: (target: MineflayerBlock) => number;
+  };
+  if (typeof maybeBot.digTime !== "function") {
+    return undefined;
+  }
+
+  const value = maybeBot.digTime(block);
+  return Number.isFinite(value) ? value : undefined;
+}
+
+async function waitForPlacedBlock(bot: Bot, targetPosition: Vec3Type, timeoutMs: number): Promise<MineflayerBlock | undefined> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const current = bot.blockAt(targetPosition);
+    if (current && !AIR_BLOCK_NAMES.has(current.name)) {
+      return current;
+    }
+
+    await sleep(100);
+  }
+
+  const current = bot.blockAt(targetPosition);
+  return current && !AIR_BLOCK_NAMES.has(current.name) ? current : undefined;
+}
+
+function getBlockStateSignature(block: MineflayerBlock): string {
+  const maybeBlock = block as MineflayerBlock & {
+    _properties?: Record<string, string | number | boolean>;
+    properties?: Record<string, string | number | boolean>;
+  };
+
+  return JSON.stringify({
+    metadata: block.metadata,
+    name: block.name,
+    properties: maybeBlock._properties ?? maybeBlock.properties ?? {},
+    type: block.type,
+  });
+}
+
+function countInventoryItemsByName(bot: Bot, itemName: string): number {
+  const normalizedName = normalizeEntityOrItemAlias(itemName);
+  return bot.inventory
+    .items()
+    .filter((item) => matchesItemName(item, normalizedName))
+    .reduce((total, item) => total + item.count, 0);
+}
+
+function countInventoryItemsByType(bot: Bot, itemType: number): number {
+  return bot.inventory
+    .items()
+    .filter((item) => item.type === itemType)
+    .reduce((total, item) => total + item.count, 0);
+}
+
+async function waitForInventoryCountAtMost(bot: Bot, itemType: number, maxCount: number, timeoutMs: number): Promise<boolean> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (countInventoryItemsByType(bot, itemType) <= maxCount) {
+      return true;
+    }
+
+    await sleep(100);
+  }
+
+  return countInventoryItemsByType(bot, itemType) <= maxCount;
+}
+
+interface AttackConfirmation {
+  confirmed: boolean;
+  currentHealth?: number;
+  damaged: boolean;
+  targetGone: boolean;
+}
+
+async function waitForAttackConfirmation(
+  bot: Bot,
+  entityId: number,
+  initialHealth: number | undefined,
+  timeoutMs: number,
+): Promise<AttackConfirmation> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const entity = bot.entities[entityId];
+    if (!entity || entity.isValid === false) {
+      return {
+        confirmed: true,
+        damaged: false,
+        targetGone: true,
+      };
+    }
+
+    const currentHealth = getEntityHealth(entity);
+    if (initialHealth !== undefined && currentHealth !== undefined && currentHealth < initialHealth) {
+      return {
+        confirmed: true,
+        currentHealth,
+        damaged: true,
+        targetGone: false,
+      };
+    }
+
+    await sleep(100);
+  }
+
+  const entity = bot.entities[entityId];
+  const targetGone = !entity || entity.isValid === false;
+  const currentHealth = entity ? getEntityHealth(entity) : undefined;
+  return {
+    confirmed: targetGone,
+    damaged: false,
+    targetGone,
+    ...(currentHealth === undefined ? {} : { currentHealth }),
+  };
+}
+
+function getEntityHealth(entity: MineflayerEntity): number | undefined {
+  const maybeEntity = entity as MineflayerEntity & {
+    health?: number;
+  };
+  return typeof maybeEntity.health === "number" && Number.isFinite(maybeEntity.health) ? maybeEntity.health : undefined;
+}
+
+function horizontalDistance(position: Vec3Type, x: number, z: number): number {
+  const dx = position.x - x;
+  const dz = position.z - z;
+  return Math.sqrt(dx * dx + dz * dz);
 }
 
 async function waitForItemPickup(bot: Bot, entityId: number, timeoutMs: number): Promise<boolean> {

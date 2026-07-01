@@ -212,7 +212,7 @@ const pluginRuntime = new PluginRuntime({
       bot?.chat(message);
     },
     followPlayer: (playerName, distance) => followPlayer(requireBot(), playerName, distance),
-    goToPosition: (x, y, z, range) => goToPosition(requireBot(), x, y, z, range),
+    goToPosition: (x, y, z, range, options) => goToPosition(requireBot(), x, y, z, range, options),
     requireBot,
     stopCurrentControls: (reason) => {
       stopCurrentControls(requireBot(), reason);
@@ -525,8 +525,20 @@ async function followPlayer(activeBot: Bot, playerName: string, distance = 2): P
   };
 }
 
-async function goToPosition(activeBot: Bot, x: number, y: number, z: number, range = 1): Promise<ActionResult> {
+async function goToPosition(
+  activeBot: Bot,
+  x: number,
+  y: number,
+  z: number,
+  range = 1,
+  options: {
+    timeoutMs?: number;
+    waitForArrival?: boolean;
+  } = {},
+): Promise<ActionResult> {
   const arrivalRange = clamp(range, 0, 8);
+  const waitForArrival = options.waitForArrival ?? true;
+  const timeoutMs = clamp(options.timeoutMs ?? 12_000, 500, 60_000);
   const pathfinderBot = requirePathfinderBot(activeBot);
   stopCurrentControls(activeBot, `Starting go_to_position to ${round(x)}, ${round(y)}, ${round(z)}`);
 
@@ -539,16 +551,56 @@ async function goToPosition(activeBot: Bot, x: number, y: number, z: number, ran
     range: arrivalRange,
   });
 
+  const arrived = waitForArrival ? await waitForBotArrival(activeBot, x, y, z, arrivalRange, timeoutMs) : false;
+  if (waitForArrival && !arrived) {
+    throw new Error(`Did not arrive at ${round(x)}, ${round(y)}, ${round(z)} within ${timeoutMs}ms`);
+  }
+
   return {
     ok: true,
-    message: `Going to ${round(x)}, ${round(y)}, ${round(z)}`,
+    message: arrived
+      ? `Arrived at ${round(x)}, ${round(y)}, ${round(z)}`
+      : `Going to ${round(x)}, ${round(y)}, ${round(z)}`,
     data: {
       x,
       y,
       z,
       range: arrivalRange,
+      arrived,
+      confirmed: arrived,
+      waitForArrival,
+      timeoutMs,
     },
   };
+}
+
+async function waitForBotArrival(
+  activeBot: Bot,
+  x: number,
+  y: number,
+  z: number,
+  range: number,
+  timeoutMs: number,
+): Promise<boolean> {
+  const startedAt = Date.now();
+  const arrivalDistance = Math.max(range, 0.35);
+
+  while (Date.now() - startedAt < timeoutMs) {
+    if (distanceToPosition(activeBot.entity.position, x, y, z) <= arrivalDistance) {
+      return true;
+    }
+
+    await sleep(200);
+  }
+
+  return distanceToPosition(activeBot.entity.position, x, y, z) <= arrivalDistance;
+}
+
+function distanceToPosition(position: SnapshotVec3, x: number, y: number, z: number): number {
+  const dx = position.x - x;
+  const dy = position.y - y;
+  const dz = position.z - z;
+  return Math.sqrt(dx * dx + dy * dy + dz * dz);
 }
 
 function configurePathfinder(activeBot: PathfinderBot): void {
@@ -1374,6 +1426,12 @@ function round(value: number): number {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
 
 function shutdown(signal: string): void {

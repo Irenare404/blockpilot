@@ -14,7 +14,16 @@ export interface WorkerPluginConfig {
 export interface WorkerMinecraftApi {
   chat: (message: string) => void;
   followPlayer: (playerName: string, distance?: number) => Promise<ActionResult>;
-  goToPosition: (x: number, y: number, z: number, range?: number) => Promise<ActionResult>;
+  goToPosition: (
+    x: number,
+    y: number,
+    z: number,
+    range?: number,
+    options?: {
+      timeoutMs?: number;
+      waitForArrival?: boolean;
+    },
+  ) => Promise<ActionResult>;
   requireBot: () => Bot;
   stopCurrentControls: (reason?: string) => void;
 }
