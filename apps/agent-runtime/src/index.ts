@@ -34,6 +34,9 @@ interface AgentConfig {
     mode: AutonomyMode;
     intervalMs: number;
     chatEnabled: boolean;
+    requireRecentChat: boolean;
+    recentChatWindowMs: number;
+    startupGraceMs: number;
   };
   safetyReflex: {
     enabled: boolean;
@@ -69,6 +72,9 @@ const autonomy = new AutonomyLoop(client, memory, {
   mode: config.autonomy.mode,
   intervalMs: config.autonomy.intervalMs,
   chatEnabled: config.autonomy.chatEnabled,
+  requireRecentChat: config.autonomy.requireRecentChat,
+  recentChatWindowMs: config.autonomy.recentChatWindowMs,
+  startupGraceMs: config.autonomy.startupGraceMs,
   allowedActionNames: config.allowedActionNames,
 });
 const agent = new ChatAgent(client, planner, {
@@ -104,6 +110,9 @@ console.log(`[agent-runtime] safety reflex: ${config.safetyReflex.enabled ? "ena
 console.log(`[agent-runtime] memory: ${config.memoryFilePath}`);
 console.log(
   `[agent-runtime] autonomy: ${config.autonomy.enabled ? "enabled" : "disabled"} (${config.autonomy.mode}, interval ${config.autonomy.intervalMs}ms)`,
+);
+console.log(
+  `[agent-runtime] autonomy chat gate: ${config.autonomy.requireRecentChat ? `recent chat within ${config.autonomy.recentChatWindowMs}ms` : "off"}, startup grace ${config.autonomy.startupGraceMs}ms`,
 );
 console.log(
   `[agent-runtime] decision log: ${config.decisionLog.mode}${config.decisionLog.mode === "file" || config.decisionLog.mode === "both" ? ` (${config.decisionLog.filePath})` : ""}`,
@@ -161,6 +170,9 @@ function readConfig(): AgentConfig {
       mode: autonomyMode,
       intervalMs: readInteger(process.env.BLOCKPILOT_AUTONOMY_INTERVAL_MS, 120_000),
       chatEnabled: readBoolean(process.env.BLOCKPILOT_AUTONOMY_CHAT, true),
+      requireRecentChat: readBoolean(process.env.BLOCKPILOT_AUTONOMY_REQUIRE_RECENT_CHAT, true),
+      recentChatWindowMs: readInteger(process.env.BLOCKPILOT_AUTONOMY_RECENT_CHAT_WINDOW_MS, 180_000),
+      startupGraceMs: readNonNegativeInteger(process.env.BLOCKPILOT_AUTONOMY_STARTUP_GRACE_MS, 120_000),
     },
     safetyReflex: {
       enabled: readBoolean(process.env.BLOCKPILOT_SAFETY_REFLEX, true),
@@ -222,6 +234,15 @@ function readInteger(value: string | undefined, fallback: number): number {
 
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function readNonNegativeInteger(value: string | undefined, fallback: number): number {
+  if (!value) {
+    return fallback;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
 function readNumber(value: string | undefined, fallback: number): number {

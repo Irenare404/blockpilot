@@ -322,6 +322,9 @@ Environment variables:
 - `BLOCKPILOT_AUTONOMY_MODE`: `companion`, `guard`, `explore`, `builder`, or `free_roam`. Defaults to `companion`.
 - `BLOCKPILOT_AUTONOMY_INTERVAL_MS`: minimum delay between autonomy messages. Defaults to `120000`.
 - `BLOCKPILOT_AUTONOMY_CHAT`: allow autonomy to speak through chat. Defaults to `true`.
+- `BLOCKPILOT_AUTONOMY_REQUIRE_RECENT_CHAT`: only allow autonomy chat after recent player chat. Defaults to `true`.
+- `BLOCKPILOT_AUTONOMY_RECENT_CHAT_WINDOW_MS`: recent chat window for autonomy. Defaults to `180000`.
+- `BLOCKPILOT_AUTONOMY_STARTUP_GRACE_MS`: delay autonomy chat after agent startup. Defaults to `120000`.
 - `BLOCKPILOT_SAFETY_REFLEX`: enable local safety reflexes. Defaults to `true`.
 - `BLOCKPILOT_SAFETY_COOLDOWN_MS`: minimum delay between safety actions. Defaults to `5000`.
 - `BLOCKPILOT_SAFETY_NOTICE`: send chat notices for safety reflexes. Defaults to `false`.
@@ -331,7 +334,7 @@ Safety reflexes run before the rule or LLM planner. When the bot is hungry or hu
 
 Agent memory is updated from every world snapshot. It remembers a home position, recently seen players, containers, utility blocks, spawners, danger blocks, visited areas, and short observations. The first safe online position becomes a default home; use `!bp sethome` to overwrite it while the bot is standing at the real base. Use `!bp home`, `!bp go home`, and `!bp memory` to test the rule planner memory path.
 
-Autonomy runs only when enabled, the bot can chat, no current task is active, and safety is not `danger` or `critical`. It is deliberately low frequency so it can make companion-style suggestions without flooding chat.
+Autonomy runs only when enabled, the bot can chat, no current task is active, and safety is not `danger` or `critical`. By default it also waits for the startup grace period and requires recent player chat, so memory observations such as nearby containers are stored silently instead of being announced on join.
 
 The agent handles only the newest unprocessed player chat message each tick. Older queued chat is marked handled to avoid delayed duplicate-looking replies after safety reflexes or slow LLM calls.
 

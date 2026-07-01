@@ -7,6 +7,9 @@ export interface AutonomyConfig {
   mode: AutonomyMode;
   intervalMs: number;
   chatEnabled: boolean;
+  requireRecentChat: boolean;
+  recentChatWindowMs: number;
+  startupGraceMs: number;
   allowedActionNames: string[];
 }
 
@@ -14,6 +17,7 @@ export class AutonomyLoop {
   private readonly client: GatewayClient;
   private readonly memory: MemoryStore;
   private readonly config: AutonomyConfig;
+  private readonly startedAt = Date.now();
   private lastActedAt = 0;
   private lastMessageKey: string | undefined;
 
@@ -32,11 +36,19 @@ export class AutonomyLoop {
       return false;
     }
 
+    const now = Date.now();
+    if (now - this.startedAt < this.config.startupGraceMs) {
+      return false;
+    }
+
+    if (this.config.requireRecentChat && !hasRecentPlayerChat(world, this.config.recentChatWindowMs)) {
+      return false;
+    }
+
     if (world.safety.dangerLevel === "danger" || world.safety.dangerLevel === "critical") {
       return false;
     }
 
-    const now = Date.now();
     const persistedLastActedAt = memory.autonomy.lastActedAt ? Date.parse(memory.autonomy.lastActedAt) : 0;
     const lastActedAt = Math.max(this.lastActedAt, Number.isFinite(persistedLastActedAt) ? persistedLastActedAt : 0);
     if (now - lastActedAt < this.config.intervalMs) {
@@ -87,21 +99,12 @@ function chooseCompanionMessage(world: WorldSnapshot, memory: AgentMemorySnapsho
     return "\u6211\u770B\u5230\u9644\u8FD1\u50CF\u662F\u5237\u602A\u88C5\u7F6E\uFF0C\u6211\u5148\u5F53\u6210\u751F\u7535\u8BBE\u65BD\uFF0C\u4E0D\u4E71\u6253\u602A\u3002";
   }
 
-  const container = world.blocks.nearbyContainers[0] ?? memory.places.find((place) => place.kind === "container");
-  if (container) {
-    return "\u6211\u8BB0\u4F4F\u9644\u8FD1\u6709\u5BB9\u5668\u4E86\u3002\u4EE5\u540E\u4F60\u8BA9\u6211\u770B\u4ED3\u5E93\uFF0C\u6211\u4F1A\u628A\u8FD9\u91CC\u5F53\u7EBF\u7D22\u3002";
-  }
-
-  if (memory.home) {
-    return `\u6211\u8BB0\u5F97\u5BB6\u5728 ${formatPosition(memory.home.position)}\uFF0C\u7A7A\u4E86\u53EF\u4EE5\u4ECE\u8FD9\u91CC\u51FA\u53D1\u63A2\u7D22\u3002`;
-  }
-
   const player = world.nearbyPlayers[0];
   if (player) {
-    return `\u6211\u5728\u65C1\u8FB9\u770B\u7740\uFF0C\u770B\u5230 ${player.username} \u5728\u9644\u8FD1\u3002`;
+    return `${player.username}\uFF0C\u9700\u8981\u6211\u8DDF\u968F\u3001\u67E5\u770B\u7BB1\u5B50\u6216\u6316\u9644\u8FD1\u65B9\u5757\u65F6\u53EB\u6211\u3002`;
   }
 
-  return "\u6211\u5728\u89C2\u5BDF\u5468\u56F4\uFF0C\u6682\u65F6\u5B89\u5168\u3002";
+  return undefined;
 }
 
 function chooseGuardMessage(world: WorldSnapshot, memory: AgentMemorySnapshot): string | undefined {
@@ -150,4 +153,17 @@ function formatPosition(position: { x: number; y: number; z: number }): string {
 
 function normalizeMessage(message: string): string {
   return message.trim().toLowerCase().replace(/\s+/gu, " ");
+}
+
+function hasRecentPlayerChat(world: WorldSnapshot, windowMs: number): boolean {
+  const now = Date.now();
+  const botUsername = world.status.username ?? world.botId;
+  return world.recentChat.some((message) => {
+    if (message.username.localeCompare(botUsername, undefined, { sensitivity: "accent" }) === 0) {
+      return false;
+    }
+
+    const receivedAt = Date.parse(message.receivedAt);
+    return Number.isFinite(receivedAt) && now - receivedAt <= windowMs;
+  });
 }
