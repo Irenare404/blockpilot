@@ -856,7 +856,7 @@ function createBlockSnapshots(): WorldSnapshot["blocks"] {
 
   const diggablePositions = activeBot.findBlocks({
     point: botPosition,
-    matching: (block) => isDiggableSnapshotBlock(activeBot, block),
+    matching: (block) => isDiggableSnapshotCandidate(block.name),
     maxDistance: DIGGABLE_BLOCK_SCAN_RADIUS,
     count: 160,
   });
@@ -1173,12 +1173,20 @@ function isTrackedBlock(name: string): boolean {
   return isUtilityBlock(name) || isDangerBlock(name) || isContainerBlock(name) || isSpawnerBlock(name);
 }
 
+function isDiggableSnapshotCandidate(name: string): boolean {
+  return !AIR_BLOCK_NAMES.has(name) && !isTrackedBlock(name);
+}
+
 function isDiggableSnapshotBlock(activeBot: Bot, block: MineflayerBlock): boolean {
-  return (
-    !AIR_BLOCK_NAMES.has(block.name) &&
-    !isTrackedBlock(block.name) &&
-    activeBot.canDigBlock(block)
-  );
+  if (!isDiggableSnapshotCandidate(block.name)) {
+    return false;
+  }
+
+  try {
+    return activeBot.canDigBlock(block);
+  } catch {
+    return false;
+  }
 }
 
 function isUtilityBlock(name: string): boolean {
