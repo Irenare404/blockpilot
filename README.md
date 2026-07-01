@@ -340,6 +340,8 @@ The agent handles only the newest unprocessed player chat message each tick. Old
 
 Decision logs record each agent tick as structured JSONL events: world summary, safety result, selected chat, planner result or planner error, skipped steps, executed actions, action results, and errors. Use `BLOCKPILOT_AGENT_DECISION_LOG=console` while debugging, or `both` to write the JSONL file and also print to the terminal.
 
+On Windows `cmd.exe`, run `chcp 65001` before starting the services if Chinese text appears as mojibake in console output. The JSONL file is written as UTF-8.
+
 Action failures are contained inside the agent tick. If a worker action cannot find a target, the agent records a step error and can send a short in-game failure reply instead of repeatedly printing a full `tick failed` 502 body.
 
 The agent has an in-process task queue for short multi-step goals. Queued tasks run one step at a time when no new player chat is waiting, the worker has no active task, and safety is not `danger` or `critical`. Current rule-planner task tests are `!bp task collect`, `!bp task storage`, and `!bp patrol`.

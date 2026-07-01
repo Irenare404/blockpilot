@@ -865,11 +865,11 @@ function normalizeRequestedBlockName(value: string, allowUnknown: boolean): stri
     case "\u6CE5\u571F":
     case "\u571F":
     case "dirt":
-      return "dirt,grass_block";
+      return "dirt,grass,grass_block";
     case "\u8349\u65B9\u5757":
     case "grass":
     case "grass_block":
-      return "grass_block,dirt";
+      return "grass,grass_block,dirt";
     case "\u77F3\u5934":
     case "stone":
       return "stone";

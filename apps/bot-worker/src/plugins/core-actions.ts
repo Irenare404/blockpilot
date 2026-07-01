@@ -1110,7 +1110,10 @@ function normalizeBlockName(value: string): string {
 function expandBlockName(name: string): string[] {
   switch (name) {
     case "dirt":
-      return ["dirt", "grass_block", "coarse_dirt", "rooted_dirt", "podzol"];
+      return ["dirt", "grass", "grass_block", "coarse_dirt", "rooted_dirt", "podzol"];
+    case "grass":
+    case "grass_block":
+      return ["grass", "grass_block"];
     case "stone":
       return ["stone", "cobblestone", "deepslate"];
     case "tree":
