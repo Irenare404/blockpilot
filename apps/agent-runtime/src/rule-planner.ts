@@ -664,7 +664,7 @@ function normalizeSpacing(message: string): string {
 }
 
 function parseDigBlockName(command: string): string | undefined {
-  for (const prefix of ["dig ", "mine ", "\u6316 "]) {
+  for (const prefix of ["dig ", "mine ", "chop ", "cut ", "\u6316 ", "\u780D ", "\u4F10 "]) {
     if (!command.startsWith(prefix)) {
       continue;
     }
@@ -849,6 +849,17 @@ function normalizePlaceItemName(value: string): string {
 function normalizeRequestedBlockName(value: string, allowUnknown: boolean): string | undefined {
   const normalized = normalizeSpacing(value).replace(/^minecraft:/u, "").replace(/\s+/gu, "_");
   switch (normalized) {
+    case "\u780D\u6811":
+    case "\u4F10\u6728":
+    case "\u780D\u6728\u5934":
+    case "\u6811":
+    case "\u6811\u5E72":
+    case "\u6728\u5934":
+    case "\u539F\u6728":
+    case "tree":
+    case "wood":
+    case "log":
+      return "log";
     case "\u6316\u6CE5\u571F":
     case "\u6316\u571F":
     case "\u6CE5\u571F":

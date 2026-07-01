@@ -52,6 +52,32 @@ const CONTAINER_BLOCK_NAMES = new Set([
   "trapped_chest",
 ]);
 const AIR_BLOCK_NAMES = new Set(["air", "cave_air", "void_air"]);
+const LOG_BLOCK_NAMES = [
+  "log",
+  "log2",
+  "oak_log",
+  "spruce_log",
+  "birch_log",
+  "jungle_log",
+  "acacia_log",
+  "dark_oak_log",
+  "mangrove_log",
+  "cherry_log",
+  "pale_oak_log",
+  "crimson_stem",
+  "warped_stem",
+  "stripped_oak_log",
+  "stripped_spruce_log",
+  "stripped_birch_log",
+  "stripped_jungle_log",
+  "stripped_acacia_log",
+  "stripped_dark_oak_log",
+  "stripped_mangrove_log",
+  "stripped_cherry_log",
+  "stripped_pale_oak_log",
+  "stripped_crimson_stem",
+  "stripped_warped_stem",
+];
 const HOSTILE_ENTITY_NAMES = new Set([
   "blaze",
   "bogged",
@@ -970,9 +996,13 @@ function expandBlockName(name: string): string[] {
       return ["dirt", "grass_block", "coarse_dirt", "rooted_dirt", "podzol"];
     case "stone":
       return ["stone", "cobblestone", "deepslate"];
+    case "tree":
+    case "\u6811":
+    case "\u6728\u5934":
+    case "\u539F\u6728":
     case "wood":
     case "log":
-      return ["oak_log", "spruce_log", "birch_log", "jungle_log", "acacia_log", "dark_oak_log", "mangrove_log", "cherry_log"];
+      return LOG_BLOCK_NAMES;
     case "container":
       return ["barrel", "chest", "trapped_chest", "shulker_box"];
     case "door":
@@ -1005,7 +1035,7 @@ function resolveExactBlock(
 
   if (!matchesBlockName(block.name, names)) {
     throw new Error(
-      `Block at ${position.x}, ${position.y}, ${position.z} is '${block.name}', not '${[...names].join(",")}'`,
+      `Block at ${position.x}, ${position.y}, ${position.z} is '${block.name}', not '${formatExpectedBlockNames(names)}'`,
     );
   }
 
@@ -1046,6 +1076,10 @@ function matchesBlockName(blockName: string, names: Set<string>): boolean {
     return true;
   }
 
+  if (isLogBlockName(blockName) && hasAnyLogName(names)) {
+    return true;
+  }
+
   if (names.has("door") && blockName.endsWith("_door")) {
     return true;
   }
@@ -1067,6 +1101,27 @@ function matchesBlockName(blockName: string, names: Set<string>): boolean {
   }
 
   return false;
+}
+
+function isLogBlockName(blockName: string): boolean {
+  return blockName === "log" || blockName === "log2" || blockName.endsWith("_log") || blockName.endsWith("_stem");
+}
+
+function hasAnyLogName(names: Set<string>): boolean {
+  return LOG_BLOCK_NAMES.some((name) => names.has(name)) || names.has("wood") || names.has("tree");
+}
+
+function formatExpectedBlockNames(names: Set<string>): string {
+  if (hasAnyLogName(names)) {
+    return "log";
+  }
+
+  const values = [...names];
+  if (values.length <= 4) {
+    return values.join(",");
+  }
+
+  return `${values.slice(0, 4).join(",")}...`;
 }
 
 function findInventoryItemForDrop(bot: Bot, itemName: string | undefined, slot: number | undefined): MineflayerItem | undefined {
