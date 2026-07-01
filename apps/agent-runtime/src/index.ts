@@ -162,7 +162,7 @@ function readConfig(): AgentConfig {
     aliases: readCsv(process.env.BLOCKPILOT_AGENT_ALIASES),
     allowedActionNames: readCsv(
       process.env.BLOCKPILOT_AGENT_ALLOWED_ACTIONS,
-      "chat,follow_player,go_to_position,dig_nearest_block,place_block,use_nearest_block,inspect_nearest_container,collect_nearest_item,drop_item,attack_nearest_entity,stop,report_position,world_snapshot,eat_food,retreat_from_threat",
+      "chat,follow_player,go_to_position,dig_nearest_block,place_block,use_nearest_block,inspect_nearest_container,deposit_item_to_container,withdraw_item_from_container,collect_nearest_item,drop_item,attack_nearest_entity,stop,report_position,world_snapshot,eat_food,retreat_from_threat",
     ),
     responseDedupMs: readNonNegativeInteger(process.env.BLOCKPILOT_RESPONSE_DEDUP_MS, 30_000),
     decisionLog: {

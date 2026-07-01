@@ -112,6 +112,30 @@ export interface InspectNearestContainerAction {
   };
 }
 
+export interface DepositItemToContainerAction {
+  name: "deposit_item_to_container";
+  args?: {
+    itemName?: string;
+    count?: number;
+    maxDistance?: number;
+    x?: number;
+    y?: number;
+    z?: number;
+  };
+}
+
+export interface WithdrawItemFromContainerAction {
+  name: "withdraw_item_from_container";
+  args: {
+    itemName: string;
+    count?: number;
+    maxDistance?: number;
+    x?: number;
+    y?: number;
+    z?: number;
+  };
+}
+
 export interface CollectNearestItemAction {
   name: "collect_nearest_item";
   args?: {
@@ -159,6 +183,8 @@ export type BuiltInBotAction =
   | PlaceBlockAction
   | UseNearestBlockAction
   | InspectNearestContainerAction
+  | DepositItemToContainerAction
+  | WithdrawItemFromContainerAction
   | CollectNearestItemAction
   | DropItemAction
   | AttackNearestEntityAction;

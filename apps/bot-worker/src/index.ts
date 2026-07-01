@@ -306,6 +306,7 @@ function connectMinecraft(): void {
     connectedAt = connectedAt ?? nowIso();
     lastError = undefined;
     configurePathfinder(requirePathfinderBot(bot));
+    void loadOptionalMineflayerPlugins(requireBot());
     console.log("[bot-worker] spawned in Minecraft server");
     publishEvent("bot.spawn", "Bot spawned in Minecraft server");
     publishStatus();
@@ -611,12 +612,22 @@ function stopCurrentControls(activeBot: Bot, reason?: string): void {
   activeBot.clearControlStates();
 
   const maybePathfinder = activeBot as Bot & {
+    collectBlock?: {
+      cancelTask?: () => Promise<void> | void;
+    };
     pathfinder?: {
       setGoal?: (goal: null) => void;
       stop?: () => void;
     };
+    pvp?: {
+      forceStop?: () => void;
+      stop?: () => Promise<void> | void;
+    };
   };
 
+  void maybePathfinder.collectBlock?.cancelTask?.();
+  maybePathfinder.pvp?.forceStop?.();
+  void maybePathfinder.pvp?.stop?.();
   maybePathfinder.pathfinder?.stop?.();
   maybePathfinder.pathfinder?.setGoal?.(null);
 
@@ -651,6 +662,63 @@ function requirePathfinderBot(activeBot: Bot | undefined): PathfinderBot {
   }
 
   return maybePathfinderBot as PathfinderBot;
+}
+
+async function loadOptionalMineflayerPlugins(activeBot: Bot): Promise<void> {
+  const plugins: Array<{ packageName: string; exportName: string; configure?: (bot: Bot) => void }> = [
+    {
+      packageName: "mineflayer-tool",
+      exportName: "plugin",
+    },
+    {
+      packageName: "mineflayer-collectblock",
+      exportName: "plugin",
+    },
+    {
+      packageName: "mineflayer-pvp",
+      exportName: "plugin",
+    },
+    {
+      packageName: "mineflayer-auto-eat",
+      exportName: "loader",
+      configure: (botToConfigure) => {
+        const maybeAutoEat = botToConfigure as Bot & {
+          autoEat?: {
+            disableAuto?: () => void;
+            setOpts?: (options: Record<string, unknown>) => void;
+          };
+        };
+        maybeAutoEat.autoEat?.setOpts?.({
+          returnToLastItem: true,
+          strictErrors: true,
+        });
+        maybeAutoEat.autoEat?.disableAuto?.();
+      },
+    },
+  ];
+
+  for (const plugin of plugins) {
+    try {
+      const loaded = (await import(plugin.packageName)) as Record<string, unknown> & {
+        default?: Record<string, unknown> | ((bot: Bot) => void);
+      };
+      const mineflayerPlugin =
+        loaded[plugin.exportName] ??
+        (typeof loaded.default === "object" && loaded.default ? loaded.default[plugin.exportName] : undefined) ??
+        (plugin.exportName === "plugin" && typeof loaded.default === "function" ? loaded.default : undefined);
+
+      if (typeof mineflayerPlugin !== "function") {
+        console.warn(`[bot-worker] optional plugin '${plugin.packageName}' did not export '${plugin.exportName}'`);
+        continue;
+      }
+
+      activeBot.loadPlugin(mineflayerPlugin as (bot: Bot) => void);
+      plugin.configure?.(activeBot);
+      console.log(`[bot-worker] optional plugin loaded: ${plugin.packageName}`);
+    } catch (error) {
+      console.warn(`[bot-worker] optional plugin unavailable: ${plugin.packageName} (${asErrorMessage(error)})`);
+    }
+  }
 }
 
 function publishStatus(): void {

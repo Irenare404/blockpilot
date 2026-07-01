@@ -16,6 +16,24 @@ const { Vec3 } = vec3Package;
 type MineflayerBlock = NonNullable<ReturnType<Bot["blockAt"]>>;
 type MineflayerEntity = Bot["entity"];
 type MineflayerItem = ReturnType<Bot["inventory"]["items"]>[number];
+type EnhancedBot = Bot & {
+  autoEat?: {
+    eat?: (options?: Record<string, unknown>) => Promise<void>;
+  };
+  collectBlock?: {
+    collect?: (target: MineflayerBlock | MineflayerEntity | Array<MineflayerBlock | MineflayerEntity>, options?: Record<string, unknown>) => Promise<void>;
+  };
+  pvp?: {
+    attack?: (target: MineflayerEntity) => Promise<void> | void;
+    attackRange?: number;
+    followRange?: number;
+    stop?: () => Promise<void> | void;
+    viewDistance?: number;
+  };
+  tool?: {
+    equipForBlock?: (block: MineflayerBlock, options?: Record<string, unknown>) => Promise<void>;
+  };
+};
 
 const FOOD_ITEM_NAMES = [
   "cooked_beef",
@@ -345,7 +363,11 @@ export const coreActionsPlugin: WorkerPlugin = {
           }
 
           const timeoutMs = getDigConfirmationTimeoutMs(bot, block, confirmTimeoutMs);
-          await bot.dig(block, true);
+          const usedScaffold = await collectBlockWithPlugin(bot, block);
+          if (!usedScaffold) {
+            await equipBestToolForBlock(bot, block);
+            await bot.dig(block, true);
+          }
           const confirmed = await waitForBlockToChange(bot, block, timeoutMs);
           if (!confirmed) {
             const position = toPositionData(block.position);
@@ -607,6 +629,179 @@ export const coreActionsPlugin: WorkerPlugin = {
 
     ctx.actions.register(
       {
+        name: "deposit_item_to_container",
+        description: "Deposit an inventory item stack into a nearby container using Mineflayer container APIs.",
+        source: "builtin",
+        parameters: {
+          type: "object",
+          properties: {
+            itemName: {
+              type: "string",
+              description: "Optional inventory item name to deposit, such as dirt or cobblestone. Defaults to the first depositable stack.",
+            },
+            count: {
+              type: "number",
+              description: "Number of items to deposit. Defaults to the full selected stack.",
+              minimum: 1,
+              maximum: 64,
+            },
+            maxDistance: {
+              type: "number",
+              description: "Maximum container search distance in blocks.",
+              default: 6,
+              minimum: 1,
+              maximum: 16,
+            },
+            x: {
+              type: "number",
+              description: "Optional exact container block x coordinate.",
+            },
+            y: {
+              type: "number",
+              description: "Optional exact container block y coordinate.",
+            },
+            z: {
+              type: "number",
+              description: "Optional exact container block z coordinate.",
+            },
+          },
+          additionalProperties: false,
+        },
+      },
+      async (action) => {
+        const bot = ctx.minecraft.requireBot();
+        const itemName = getOptionalStringArg(action, "itemName");
+        const item = findInventoryItemForContainerDeposit(bot, itemName);
+        if (!item) {
+          throw new Error(itemName ? `No inventory item '${itemName}' found` : "No depositable inventory item found");
+        }
+
+        const count = Math.min(Math.floor(clamp(getOptionalNumberArg(action, "count") ?? item.count, 1, 64)), item.count);
+        const containerBlock = findTargetContainerBlock(bot, action);
+        const beforeCount = countInventoryItemsByType(bot, item.type);
+
+        ctx.minecraft.stopCurrentControls(`Depositing ${count} ${item.name}`);
+        const container = await bot.openContainer(containerBlock);
+        try {
+          await container.deposit(item.type, null, count);
+        } finally {
+          container.close();
+        }
+
+        const confirmed = await waitForInventoryCountAtMost(bot, item.type, beforeCount - count, 2_000);
+        if (!confirmed) {
+          throw new Error(`Deposit did not reduce inventory count for '${item.name}' within 2000ms`);
+        }
+
+        return {
+          ok: true,
+          message: `Deposited ${count} ${item.displayName ?? item.name}`,
+          data: {
+            itemName: item.name,
+            count,
+            confirmed: true,
+            containerName: containerBlock.name,
+            x: containerBlock.position.x,
+            y: containerBlock.position.y,
+            z: containerBlock.position.z,
+          },
+        };
+      },
+    );
+
+    ctx.actions.register(
+      {
+        name: "withdraw_item_from_container",
+        description: "Withdraw an item stack from a nearby container using Mineflayer container APIs.",
+        source: "builtin",
+        parameters: {
+          type: "object",
+          properties: {
+            itemName: {
+              type: "string",
+              description: "Container item name to withdraw, such as dirt or cobblestone.",
+            },
+            count: {
+              type: "number",
+              description: "Number of items to withdraw. Defaults to 1.",
+              default: 1,
+              minimum: 1,
+              maximum: 64,
+            },
+            maxDistance: {
+              type: "number",
+              description: "Maximum container search distance in blocks.",
+              default: 6,
+              minimum: 1,
+              maximum: 16,
+            },
+            x: {
+              type: "number",
+              description: "Optional exact container block x coordinate.",
+            },
+            y: {
+              type: "number",
+              description: "Optional exact container block y coordinate.",
+            },
+            z: {
+              type: "number",
+              description: "Optional exact container block z coordinate.",
+            },
+          },
+          required: ["itemName"],
+          additionalProperties: false,
+        },
+      },
+      async (action) => {
+        const bot = ctx.minecraft.requireBot();
+        const itemName = normalizeEntityOrItemAlias(requireStringArg(action, "itemName"));
+        const count = Math.floor(clamp(getOptionalNumberArg(action, "count") ?? 1, 1, 64));
+        const containerBlock = findTargetContainerBlock(bot, action);
+        const beforeCount = countInventoryItemsByName(bot, itemName);
+
+        ctx.minecraft.stopCurrentControls(`Withdrawing ${count} ${itemName}`);
+        const container = await bot.openContainer(containerBlock);
+        let itemType: number | undefined;
+        let withdrawCount = count;
+        try {
+          const containerItem = container.containerItems().find((item) => matchesItemName(item, itemName));
+          if (!containerItem) {
+            throw new Error(`Container '${containerBlock.name}' does not contain '${itemName}'`);
+          }
+
+          itemType = containerItem.type;
+          withdrawCount = Math.min(count, containerItem.count);
+          await container.withdraw(containerItem.type, null, withdrawCount);
+        } finally {
+          container.close();
+        }
+
+        const confirmed =
+          itemType === undefined
+            ? false
+            : await waitForInventoryCountAtLeast(bot, itemType, beforeCount + withdrawCount, 2_000);
+        if (!confirmed) {
+          throw new Error(`Withdraw did not increase inventory count for '${itemName}' within 2000ms`);
+        }
+
+        return {
+          ok: true,
+          message: `Withdrew ${count} ${itemName}`,
+          data: {
+            itemName,
+            count: withdrawCount,
+            confirmed: true,
+            containerName: containerBlock.name,
+            x: containerBlock.position.x,
+            y: containerBlock.position.y,
+            z: containerBlock.position.z,
+          },
+        };
+      },
+    );
+
+    ctx.actions.register(
+      {
         name: "collect_nearest_item",
         description: "Move to the nearest dropped item and try to pick it up.",
         source: "builtin",
@@ -667,11 +862,14 @@ export const coreActionsPlugin: WorkerPlugin = {
         const droppedItem = target.getDroppedItem();
         const droppedItemName = droppedItem?.name;
         const beforeInventoryCount = droppedItemName ? countInventoryItemsByName(bot, droppedItemName) : undefined;
-        await ctx.minecraft.goToPosition(startPosition.x, startPosition.y, startPosition.z, 1, {
-          timeoutMs,
-          waitForArrival: true,
-        });
-        const pickedUp = await waitForItemPickup(bot, target.id, timeoutMs);
+        const collectedWithPlugin = await collectItemWithPlugin(bot, target);
+        if (!collectedWithPlugin) {
+          await ctx.minecraft.goToPosition(startPosition.x, startPosition.y, startPosition.z, 1, {
+            timeoutMs,
+            waitForArrival: true,
+          });
+        }
+        const pickedUp = await waitForItemPickup(bot, target.id, collectedWithPlugin ? 500 : timeoutMs);
         const inventoryConfirmed =
           beforeInventoryCount === undefined || !droppedItemName
             ? pickedUp
@@ -841,7 +1039,9 @@ export const coreActionsPlugin: WorkerPlugin = {
         const startingDistance = target.position.distanceTo(bot.entity.position);
         ctx.minecraft.stopCurrentControls(`Preparing to attack ${label}`);
 
-        if (follow && startingDistance > 3.2) {
+        const usedPvpPlugin = await attackWithPvpPlugin(bot, target);
+
+        if (!usedPvpPlugin && follow && startingDistance > 3.2) {
           await ctx.minecraft.goToPosition(target.position.x, target.position.y, target.position.z, 2, {
             waitForArrival: false,
           });
@@ -854,19 +1054,32 @@ export const coreActionsPlugin: WorkerPlugin = {
         }
 
         const attackDistance = currentTarget.position.distanceTo(bot.entity.position);
-        if (attackDistance > 4.5) {
+        if (!usedPvpPlugin && attackDistance > 4.5) {
           throw new Error(`Target '${label}' is still too far away (${attackDistance.toFixed(1)} blocks)`);
         }
 
-        ctx.minecraft.stopCurrentControls(`Attacking ${label}`);
-        await bot.lookAt(currentTarget.position.offset(0, Math.max(0.5, currentTarget.height * 0.8), 0), true);
+        if (!usedPvpPlugin) {
+          ctx.minecraft.stopCurrentControls(`Attacking ${label}`);
+          await bot.lookAt(currentTarget.position.offset(0, Math.max(0.5, currentTarget.height * 0.8), 0), true);
+        }
         const initialHealth = getEntityHealth(currentTarget);
-        bot.attack(currentTarget);
-        const attackConfirmation = await waitForAttackConfirmation(bot, currentTarget.id, initialHealth, confirmTimeoutMs);
+        if (!usedPvpPlugin) {
+          bot.attack(currentTarget);
+        }
+        const attackConfirmation = await waitForAttackConfirmation(
+          bot,
+          currentTarget.id,
+          initialHealth,
+          usedPvpPlugin ? Math.max(confirmTimeoutMs, 5_000) : confirmTimeoutMs,
+        );
 
         return {
           ok: true,
-          message: attackConfirmation.confirmed ? `Attacked ${label}` : `Attacked ${label}; hit not confirmed`,
+          message: attackConfirmation.confirmed
+            ? `Attacked ${label}`
+            : usedPvpPlugin
+              ? `Started attacking ${label}; hit not confirmed yet`
+              : `Attacked ${label}; hit not confirmed`,
           data: {
             entityId: currentTarget.id,
             targetName: getEntityName(currentTarget),
@@ -877,6 +1090,7 @@ export const coreActionsPlugin: WorkerPlugin = {
             initialHealth: initialHealth ?? null,
             currentHealth: attackConfirmation.currentHealth ?? null,
             confirmTimeoutMs,
+            usedPvpPlugin,
           },
         };
       },
@@ -935,8 +1149,11 @@ export const coreActionsPlugin: WorkerPlugin = {
         }
 
         ctx.minecraft.stopCurrentControls(getOptionalStringArg(action, "reason") ?? "Eating food");
-        await bot.equip(food, "hand");
-        await bot.consume();
+        const usedAutoEat = await eatWithAutoEatPlugin(bot, food.name);
+        if (!usedAutoEat) {
+          await bot.equip(food, "hand");
+          await bot.consume();
+        }
 
         return {
           ok: true,
@@ -944,6 +1161,7 @@ export const coreActionsPlugin: WorkerPlugin = {
           data: {
             itemName: food.name,
             confirmed: true,
+            usedAutoEat,
           },
         };
       },
@@ -1263,6 +1481,31 @@ function findInventoryItemForDrop(bot: Bot, itemName: string | undefined, slot: 
   return bot.heldItem ?? bot.inventory.items()[0];
 }
 
+function findInventoryItemForContainerDeposit(bot: Bot, itemName: string | undefined): MineflayerItem | undefined {
+  const normalizedItemName = itemName ? normalizeEntityOrItemAlias(itemName) : undefined;
+  const items = bot.inventory.items().filter((item) => !isProtectedInventoryItem(item));
+  if (normalizedItemName) {
+    return items.find((item) => matchesItemName(item, normalizedItemName));
+  }
+
+  return items[0];
+}
+
+function isProtectedInventoryItem(item: MineflayerItem): boolean {
+  return (
+    item.name.includes("helmet") ||
+    item.name.includes("chestplate") ||
+    item.name.includes("leggings") ||
+    item.name.includes("boots") ||
+    item.name.includes("shield") ||
+    item.name.includes("sword") ||
+    item.name.includes("pickaxe") ||
+    item.name.includes("axe") ||
+    item.name.includes("shovel") ||
+    item.name.includes("hoe")
+  );
+}
+
 function findInventoryItem(bot: Bot, itemName: string): ReturnType<Bot["inventory"]["items"]>[number] | undefined {
   return bot.inventory.items().find((item) => matchesItemName(item, itemName));
 }
@@ -1294,6 +1537,19 @@ function findPlacementReference(
   }
 
   return undefined;
+}
+
+function findTargetContainerBlock(bot: Bot, action: Parameters<typeof getArgs>[0]): MineflayerBlock {
+  const maxDistance = clamp(getOptionalNumberArg(action, "maxDistance") ?? 6, 1, 16);
+  const exactPosition = getOptionalBlockPositionArg(action);
+  const block = exactPosition
+    ? resolveExactBlock(bot, exactPosition, CONTAINER_BLOCK_NAMES, maxDistance, () => true, "container")
+    : findNearestBlock(bot, CONTAINER_BLOCK_NAMES, maxDistance);
+  if (!block) {
+    throw new Error(`No container found within ${maxDistance} blocks`);
+  }
+
+  return block;
 }
 
 function findNearestAttackTarget(
@@ -1471,6 +1727,70 @@ function getItemEntityNameCandidates(entity: MineflayerEntity): string[] {
   ].filter(isString);
 }
 
+async function collectBlockWithPlugin(bot: Bot, block: MineflayerBlock): Promise<boolean> {
+  const enhancedBot = bot as EnhancedBot;
+  const collect = enhancedBot.collectBlock?.collect;
+  if (!collect) {
+    return false;
+  }
+
+  await collect.call(enhancedBot.collectBlock, block, {
+    ignoreNoPath: false,
+  });
+  return true;
+}
+
+async function collectItemWithPlugin(bot: Bot, entity: MineflayerEntity): Promise<boolean> {
+  const enhancedBot = bot as EnhancedBot;
+  const collect = enhancedBot.collectBlock?.collect;
+  if (!collect) {
+    return false;
+  }
+
+  await collect.call(enhancedBot.collectBlock, entity, {
+    ignoreNoPath: false,
+  });
+  return true;
+}
+
+async function equipBestToolForBlock(bot: Bot, block: MineflayerBlock): Promise<boolean> {
+  const equipForBlock = (bot as EnhancedBot).tool?.equipForBlock;
+  if (!equipForBlock) {
+    return false;
+  }
+
+  await equipForBlock.call((bot as EnhancedBot).tool, block, {
+    getFromChest: false,
+    requireHarvest: false,
+  });
+  return true;
+}
+
+async function attackWithPvpPlugin(bot: Bot, target: MineflayerEntity): Promise<boolean> {
+  const pvp = (bot as EnhancedBot).pvp;
+  if (!pvp?.attack) {
+    return false;
+  }
+
+  pvp.followRange = 2;
+  pvp.attackRange = 3.5;
+  pvp.viewDistance = Math.max(32, Math.ceil(target.position.distanceTo(bot.entity.position) + 16));
+  await pvp.attack(target);
+  return true;
+}
+
+async function eatWithAutoEatPlugin(bot: Bot, foodName: string): Promise<boolean> {
+  const eat = (bot as EnhancedBot).autoEat?.eat;
+  if (!eat) {
+    return false;
+  }
+
+  await eat.call((bot as EnhancedBot).autoEat, {
+    food: foodName,
+  });
+  return true;
+}
+
 function getDigConfirmationTimeoutMs(bot: Bot, block: MineflayerBlock, overrideMs: number | undefined): number {
   if (typeof overrideMs === "number" && Number.isFinite(overrideMs)) {
     return Math.floor(clamp(overrideMs, 500, 30_000));
@@ -1548,6 +1868,19 @@ async function waitForInventoryCountAtMost(bot: Bot, itemType: number, maxCount:
   }
 
   return countInventoryItemsByType(bot, itemType) <= maxCount;
+}
+
+async function waitForInventoryCountAtLeast(bot: Bot, itemType: number, minCount: number, timeoutMs: number): Promise<boolean> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (countInventoryItemsByType(bot, itemType) >= minCount) {
+      return true;
+    }
+
+    await sleep(100);
+  }
+
+  return countInventoryItemsByType(bot, itemType) >= minCount;
 }
 
 interface AttackConfirmation {

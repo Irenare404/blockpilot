@@ -23,7 +23,7 @@ It supports:
 - A bot worker that joins a Java server through Mineflayer.
 - Worker registration through WebSocket.
 - Event streaming for bot status and Minecraft chat events.
-- Controlled actions: `chat`, `follow_player`, `go_to_position`, `dig_nearest_block`, `place_block`, `use_nearest_block`, `inspect_nearest_container`, `collect_nearest_item`, `drop_item`, `attack_nearest_entity`, `eat_food`, `retreat_from_threat`, `report_position`, `world_snapshot`, and `stop`.
+- Controlled actions: `chat`, `follow_player`, `go_to_position`, `dig_nearest_block`, `place_block`, `use_nearest_block`, `inspect_nearest_container`, `deposit_item_to_container`, `withdraw_item_from_container`, `collect_nearest_item`, `drop_item`, `attack_nearest_entity`, `eat_food`, `retreat_from_threat`, `report_position`, `world_snapshot`, and `stop`.
 - Local world perception for entities, important blocks, inventory, equipment, and safety.
 - Safety reflexes for eating and retreating before the LLM planner runs.
 - Agent memory for home, places, nearby players, and recent observations.
@@ -178,7 +178,7 @@ curl -X POST http://127.0.0.1:8787/bots/BlockPilot/actions \
   -d "{\"name\":\"inspect_nearest_container\",\"args\":{\"maxDistance\":6}}"
 ```
 
-Most block/entity actions accept exact targets when available from `/bots/BlockPilot/world`: `dig_nearest_block`, `use_nearest_block`, and `inspect_nearest_container` accept `x,y,z`; `collect_nearest_item` and `attack_nearest_entity` accept `entityId` plus optional `x,y,z`; `drop_item` accepts an inventory `slot`.
+Most block/entity actions accept exact targets when available from `/bots/BlockPilot/world`: `dig_nearest_block`, `use_nearest_block`, `inspect_nearest_container`, `deposit_item_to_container`, and `withdraw_item_from_container` accept `x,y,z`; `collect_nearest_item` and `attack_nearest_entity` accept `entityId` plus optional `x,y,z`; `drop_item` accepts an inventory `slot`.
 
 Collect a nearby dropped item:
 
@@ -312,7 +312,7 @@ Environment variables:
 - `BLOCKPILOT_AGENT_PLANNER`: `rule` or `llm`. Defaults to `rule`.
 - `BLOCKPILOT_AGENT_PREFIX`: in-game command prefix. Defaults to `!bp`.
 - `BLOCKPILOT_AGENT_ALIASES`: comma-separated names players may use for the bot, such as `bp,helper`.
-- `BLOCKPILOT_AGENT_ALLOWED_ACTIONS`: comma-separated action whitelist. Defaults to `chat,follow_player,go_to_position,dig_nearest_block,place_block,use_nearest_block,inspect_nearest_container,collect_nearest_item,drop_item,attack_nearest_entity,stop,report_position,world_snapshot,eat_food,retreat_from_threat`.
+- `BLOCKPILOT_AGENT_ALLOWED_ACTIONS`: comma-separated action whitelist. Defaults to `chat,follow_player,go_to_position,dig_nearest_block,place_block,use_nearest_block,inspect_nearest_container,deposit_item_to_container,withdraw_item_from_container,collect_nearest_item,drop_item,attack_nearest_entity,stop,report_position,world_snapshot,eat_food,retreat_from_threat`.
 - `BLOCKPILOT_AGENT_TICK_MS`: polling interval. Defaults to `2000`.
 - `BLOCKPILOT_RESPONSE_DEDUP_MS`: suppress identical bot chat replies within this window; set to `0` while debugging to disable suppression. Defaults to `30000`.
 - `BLOCKPILOT_AGENT_DECISION_LOG`: decision log mode: `off`, `console`, `file`, `both`, or `true` for console. Defaults to `off`.
