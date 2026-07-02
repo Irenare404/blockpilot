@@ -29,6 +29,7 @@ export interface ChatAgentConfig {
 interface GatherSpec {
   actionCount: number;
   blockName: string;
+  confirmTimeoutMs?: number;
   itemNames: string[];
   label: string;
   maxDistance: number;
@@ -57,8 +58,9 @@ const GOAL_REQUEST_TTL_MS = 120_000;
 
 const GATHER_SPECS: GatherSpec[] = [
   {
-    actionCount: 4,
+    actionCount: 1,
     blockName: "log",
+    confirmTimeoutMs: 12_000,
     itemNames: ["log", "oak_log", "spruce_log", "birch_log", "jungle_log", "acacia_log", "dark_oak_log", "mangrove_log", "cherry_log", "pale_oak_log"],
     label: "\u539f\u6728",
     maxDistance: 96,
@@ -451,7 +453,8 @@ export class ChatAgent {
     const gatherSpec = parseGatherSpec(chat.message);
     if (gatherSpec) {
       const amount = parseRequestedCount(chat.message);
-      if (amount === undefined) {
+      const continuous = parseContinuousRequest(chat.message);
+      if (amount === undefined && !continuous) {
         this.pendingGoalRequest = {
           type: "gather",
           expiresAt: Date.now() + GOAL_REQUEST_TTL_MS,
@@ -466,7 +469,7 @@ export class ChatAgent {
         };
       }
 
-      return this.createGatherTaskPlan(chat.username, gatherSpec, amount, world);
+      return this.createGatherTaskPlan(chat.username, gatherSpec, amount, world, continuous);
     }
 
     const buildSpec = parseBuildSpec(chat.message);
@@ -510,12 +513,13 @@ export class ChatAgent {
   private createPendingGoalAnswerPlan(pending: PendingGoalRequest, chat: ChatMessageSnapshot, world: WorldSnapshot): AgentPlan | undefined {
     if (pending.type === "gather") {
       const amount = parseRequestedCount(chat.message);
-      if (amount === undefined) {
+      const continuous = parseContinuousRequest(chat.message);
+      if (amount === undefined && !continuous) {
         return undefined;
       }
 
       this.pendingGoalRequest = undefined;
-      return this.createGatherTaskPlan(chat.username, pending.spec, amount, world);
+      return this.createGatherTaskPlan(chat.username, pending.spec, amount, world, continuous);
     }
 
     const preset = pending.spec.preset ?? parseBuildPreset(chat.message);
@@ -528,32 +532,51 @@ export class ChatAgent {
     return this.createBuildTaskPlan(chat.username, preset, materialItemName, world);
   }
 
-  private createGatherTaskPlan(username: string, spec: GatherSpec, amount: number, world: WorldSnapshot): AgentPlan {
+  private createGatherTaskPlan(
+    username: string,
+    spec: GatherSpec,
+    amount: number | undefined,
+    world: WorldSnapshot,
+    continuous: boolean,
+  ): AgentPlan {
     this.activeGoalOwner = username;
     const currentCount = countWorldInventoryItems(world, spec.itemNames);
-    const targetCount = currentCount + amount;
+    const targetCount = amount === undefined ? undefined : currentCount + amount;
+    const sayStart =
+      amount === undefined
+        ? `\u597d\uff0c\u6211\u53bb\u6301\u7eed\u6536\u96c6${spec.label}\uff0c\u627e\u4e0d\u5230\u6216\u4f60\u8bf4\u505c\u6b62\u5c31\u505c\u3002`
+        : `\u597d\uff0c\u6211\u53bb\u6536\u96c6 ${amount} \u4e2a${spec.label}\uff0c\u591f\u4e86\u5c31\u544a\u8bc9\u4f60\u3002`;
+    const sayDone =
+      amount === undefined
+        ? `\u5b8c\u6210\u4e86\uff0c\u9644\u8fd1\u6682\u65f6\u627e\u4e0d\u5230\u66f4\u591a${spec.label}\u3002`
+        : `\u5b8c\u6210\u4e86\uff0c\u5df2\u7ecf\u6536\u96c6\u5230 ${amount} \u4e2a${spec.label}\u3002`;
     return {
       addressedToBot: true,
       confidence: 1,
       reason: "gather goal ready",
       steps: [
-        { type: "say", message: `\u597d\uff0c\u6211\u53bb\u6536\u96c6 ${amount} \u4e2a${spec.label}\uff0c\u591f\u4e86\u5c31\u544a\u8bc9\u4f60\u3002` },
+        { type: "say", message: sayStart },
         {
           type: "task",
           task: {
-            title: `Collect ${amount} ${spec.label}`,
+            title: amount === undefined ? `Collect all reachable ${spec.label}` : `Collect ${amount} ${spec.label}`,
             source: "direct",
             steps: [
               {
                 type: "collect_until_inventory",
                 blockName: spec.blockName,
                 itemNames: spec.itemNames,
-                targetCount,
+                ...(targetCount === undefined ? {} : { targetCount }),
                 actionCount: spec.actionCount,
+                ...(spec.confirmTimeoutMs === undefined ? {} : { confirmTimeoutMs: spec.confirmTimeoutMs }),
                 maxDistance: spec.maxDistance,
-                description: `Collect ${spec.label} until inventory reaches ${targetCount}`,
+                stopWhenNoTarget: targetCount === undefined || continuous,
+                description:
+                  targetCount === undefined
+                    ? `Collect reachable ${spec.label} until stopped or no target remains`
+                    : `Collect ${spec.label} until inventory reaches ${targetCount}`,
               },
-              { type: "say", message: `\u5b8c\u6210\u4e86\uff0c\u5df2\u7ecf\u6536\u96c6\u5230 ${amount} \u4e2a${spec.label}\u3002` },
+              { type: "say", message: sayDone },
             ],
           },
         },
@@ -792,16 +815,22 @@ function createMaterialPreparationSteps(materialItemName: string, requiredCount:
   const missingCount = requiredCount - currentCount;
   if (materialItemName === "oak_planks") {
     const craftCount = Math.ceil(missingCount / 4);
+    const logSpec = GATHER_SPECS[0];
+    const collectLogsStep: AgentTaskStep = {
+      type: "collect_until_inventory",
+      blockName: "log",
+      itemNames: logSpec?.itemNames ?? ["log"],
+      targetCount: countWorldInventoryItems(world, logSpec?.itemNames ?? ["log"]) + craftCount,
+      actionCount: logSpec?.actionCount ?? 1,
+      maxDistance: logSpec?.maxDistance ?? 96,
+      description: `Collect logs for ${requiredCount} planks`,
+    };
+    if (logSpec?.confirmTimeoutMs !== undefined) {
+      collectLogsStep.confirmTimeoutMs = logSpec.confirmTimeoutMs;
+    }
+
     return [
-      {
-        type: "collect_until_inventory",
-        blockName: "log",
-        itemNames: GATHER_SPECS[0]?.itemNames ?? ["log"],
-        targetCount: countWorldInventoryItems(world, GATHER_SPECS[0]?.itemNames ?? ["log"]) + craftCount,
-        actionCount: 4,
-        maxDistance: 96,
-        description: `Collect logs for ${requiredCount} planks`,
-      },
+      collectLogsStep,
       {
         type: "action",
         action: {
@@ -918,6 +947,31 @@ function formatMaterialLabel(materialItemName: string): string {
 function parseStopRequest(message: string): boolean {
   const normalized = normalizeMessage(message);
   return containsAny(normalized, ["stop", "cancel", "\u505c", "\u505c\u6b62", "\u505c\u4e0b", "\u522b\u5f04\u4e86"]);
+}
+
+function parseContinuousRequest(message: string): boolean {
+  const normalized = normalizeMessage(message);
+  return containsAny(normalized, [
+    "all",
+    "everything",
+    "until stop",
+    "until i stop",
+    "keep",
+    "forever",
+    "\u6240\u6709",
+    "\u5168\u90e8",
+    "\u5168\u90fd",
+    "\u4e00\u76f4",
+    "\u6301\u7eed",
+    "\u76f4\u5230\u505c",
+    "\u76f4\u5230\u6211\u505c",
+    "\u5230\u6211\u53eb\u505c",
+    "\u5230\u6211\u8bf4\u505c",
+    "\u6316\u5b8c",
+    "\u780d\u5b8c",
+    "\u91c7\u5b8c",
+    "\u6ee1\u4e3a\u6b62",
+  ]);
 }
 
 function parseRequestedCount(message: string): number | undefined {

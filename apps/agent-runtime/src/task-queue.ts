@@ -20,9 +20,11 @@ export type AgentTaskStep =
       type: "collect_until_inventory";
       blockName: string;
       itemNames: string[];
-      targetCount: number;
+      targetCount?: number;
       actionCount?: number;
+      confirmTimeoutMs?: number;
       maxDistance?: number;
+      stopWhenNoTarget?: boolean;
       description?: string;
     };
 
@@ -190,7 +192,7 @@ export class AgentTaskQueue {
 
       if (step.type === "collect_until_inventory") {
         const currentCount = countInventoryItems(world, step.itemNames);
-        if (currentCount >= step.targetCount) {
+        if (step.targetCount !== undefined && currentCount >= step.targetCount) {
           this.finishStep(task, step.description ?? `Collected ${currentCount}/${step.targetCount}`);
           runner.log("task.step.result", {
             task: cloneSnapshot(task),
@@ -214,21 +216,43 @@ export class AgentTaskQueue {
           return true;
         }
 
-        const remaining = step.targetCount - currentCount;
+        const remaining = step.targetCount === undefined ? Number.POSITIVE_INFINITY : step.targetCount - currentCount;
         const actionCount = Math.min(Math.max(1, Math.floor(step.actionCount ?? 4)), remaining, 16);
-        const result = await runner.runAction({
-          name: "dig_nearest_block",
-          args: {
-            blockName: step.blockName,
-            count: actionCount,
-            maxDistance: step.maxDistance ?? 64,
-            waitForDropMs: 900,
-            settleMs: 300,
-          },
-        });
+        let result: unknown;
+        try {
+          result = await runner.runAction({
+            name: "dig_nearest_block",
+            args: {
+              blockName: step.blockName,
+              count: actionCount,
+              maxDistance: step.maxDistance ?? 64,
+              waitForDropMs: 900,
+              settleMs: 300,
+              ...(step.confirmTimeoutMs === undefined ? {} : { confirmTimeoutMs: step.confirmTimeoutMs }),
+            },
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (step.stopWhenNoTarget && isNoDiggableTargetError(message)) {
+            this.finishStep(task, `No more target blocks found; collected ${currentCount}`);
+            runner.log("task.step.result", {
+              task: cloneSnapshot(task),
+              step,
+              result: {
+                completed: true,
+                currentCount,
+                reason: "no_more_target_blocks",
+              },
+            });
+            return true;
+          }
+
+          throw error;
+        }
         task.waitUntil = Date.now() + 750;
         task.updatedAt = nowIso();
-        task.lastMessage = `Collecting ${currentCount}/${step.targetCount}`;
+        task.lastMessage =
+          step.targetCount === undefined ? `Collecting ${currentCount}; waiting for stop or no target` : `Collecting ${currentCount}/${step.targetCount}`;
         runner.log("task.step.result", {
           task: cloneSnapshot(task),
           step,
@@ -338,13 +362,21 @@ function cloneTaskStep(step: AgentTaskStep): AgentTaskStep {
       type: "collect_until_inventory",
       blockName: step.blockName,
       itemNames: [...step.itemNames],
-      targetCount: step.targetCount,
     };
+    if (step.targetCount !== undefined) {
+      clone.targetCount = step.targetCount;
+    }
     if (step.actionCount !== undefined) {
       clone.actionCount = step.actionCount;
     }
+    if (step.confirmTimeoutMs !== undefined) {
+      clone.confirmTimeoutMs = step.confirmTimeoutMs;
+    }
     if (step.maxDistance !== undefined) {
       clone.maxDistance = step.maxDistance;
+    }
+    if (step.stopWhenNoTarget !== undefined) {
+      clone.stopWhenNoTarget = step.stopWhenNoTarget;
     }
     if (step.description) {
       clone.description = step.description;
@@ -393,4 +425,8 @@ function countInventoryItems(world: WorldSnapshot, itemNames: string[]): number 
 
 function normalizeName(value: string): string {
   return value.trim().toLowerCase().replace(/^minecraft:/u, "").replace(/\s+/gu, "_");
+}
+
+function isNoDiggableTargetError(message: string): boolean {
+  return message.includes("No diggable block found");
 }

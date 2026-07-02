@@ -41,7 +41,7 @@ interface WorkerSession {
 
 const host = process.env.BLOCKPILOT_GATEWAY_HOST ?? "127.0.0.1";
 const port = readInteger(process.env.BLOCKPILOT_GATEWAY_PORT, 8787);
-const commandTimeoutMs = readInteger(process.env.BLOCKPILOT_COMMAND_TIMEOUT_MS, 15_000);
+const commandTimeoutMs = readInteger(process.env.BLOCKPILOT_COMMAND_TIMEOUT_MS, 30_000);
 
 const workerSessions = new Map<string, WorkerSession>();
 const socketSessions = new WeakMap<WebSocket, WorkerSession>();
