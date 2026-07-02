@@ -94,11 +94,6 @@ function chooseAutonomyMessage(world: WorldSnapshot, memory: AgentMemorySnapshot
 }
 
 function chooseCompanionMessage(world: WorldSnapshot, memory: AgentMemorySnapshot): string | undefined {
-  const player = world.nearbyPlayers[0];
-  if (player) {
-    return `${player.username}\uFF0C\u9700\u8981\u6211\u8DDF\u968F\u3001\u67E5\u770B\u7BB1\u5B50\u6216\u6316\u9644\u8FD1\u65B9\u5757\u65F6\u53EB\u6211\u3002`;
-  }
-
   return undefined;
 }
 

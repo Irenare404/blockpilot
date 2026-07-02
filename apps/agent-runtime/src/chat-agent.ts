@@ -816,7 +816,7 @@ function isGreetingMessage(normalizedMessage: string, botNames: string[], comman
   }
 
   cleaned = cleaned.replace(/[，。！？,.!?]/gu, "").trim();
-  return ["hi", "hello", "hey", "\u4f60\u597d", "\u55e8", "\u5728\u5417", "\u5728\u4e0d\u5728"].includes(cleaned);
+  return cleaned.length === 0 || ["hi", "hello", "hey", "\u4f60\u597d", "\u55e8", "\u5728\u5417", "\u5728\u4e0d\u5728"].includes(cleaned);
 }
 
 function matchesGatherSpec(normalized: string, spec: GatherSpec): boolean {
