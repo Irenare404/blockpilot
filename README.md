@@ -104,6 +104,21 @@ The bot worker publishes a world snapshot from loaded Minecraft chunks. Scan rad
 - `BLOCKPILOT_BLOCK_SCAN_RADIUS`: utility/container/danger block scan radius. Defaults to `64`.
 - `BLOCKPILOT_DIGGABLE_BLOCK_SCAN_RADIUS`: diggable block scan radius. Defaults to `48`.
 
+## Mineflayer Ecosystem Integrations
+
+BlockPilot uses Mineflayer ecosystem packages as scaffolding where they are reliable. Core helpers are attempted automatically when installed: `mineflayer-pathfinder`, `mineflayer-tool`, `mineflayer-collectblock`, `mineflayer-pvp`, and `mineflayer-auto-eat`.
+
+Optional integrations are environment-gated so they do not unexpectedly open ports or enable combat behavior:
+
+- `BLOCKPILOT_ARMOR_MANAGER=true`: load `mineflayer-armor-manager` and run `equipAll()` on spawn when available.
+- `BLOCKPILOT_TPS_PLUGIN=true`: load `mineflayer-tps` so future status actions can read server TPS.
+- `BLOCKPILOT_HAWKEYE=true`: load `minecrafthawkeye` for future bow aiming actions.
+- `BLOCKPILOT_DASHBOARD=true`: load `mineflayer-dashboard`.
+- `BLOCKPILOT_VIEWER=true`: start `prismarine-viewer` on `BLOCKPILOT_VIEWER_PORT` (default `3007`).
+- `BLOCKPILOT_WEB_INVENTORY=true`: start `mineflayer-web-inventory` on `BLOCKPILOT_WEB_INVENTORY_PORT` (default `3008`).
+
+These optional packages must be installed in the workspace before the switch can load them. If a package is absent, the bot logs a warning and continues.
+
 ## Gateway API
 
 ```bash

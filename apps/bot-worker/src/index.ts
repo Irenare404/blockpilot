@@ -21,6 +21,7 @@ import {
   type WorldSnapshot,
 } from "@blockpilot/core";
 import { loadDotEnv } from "@blockpilot/node-env";
+import * as mineflayerPackage from "mineflayer";
 import { createBot, type Bot, type BotOptions } from "mineflayer";
 import pathfinderPackage from "mineflayer-pathfinder";
 import { WebSocket, type RawData } from "ws";
@@ -39,6 +40,7 @@ type MineflayerEntity = Bot["entity"];
 type MineflayerItem = NonNullable<Bot["heldItem"]>;
 type MineflayerVec3 = MineflayerEntity["position"];
 type SnapshotVec3 = NonNullable<BotStatus["position"]>;
+type GenericBotPlugin = (bot: Bot) => void;
 
 interface PathfinderController {
   setMovements: (movements: InstanceType<typeof Movements>) => void;
@@ -669,7 +671,14 @@ function requirePathfinderBot(activeBot: Bot | undefined): PathfinderBot {
 }
 
 async function loadOptionalMineflayerPlugins(activeBot: Bot): Promise<void> {
-  const plugins: Array<{ packageName: string; exportName: string; configure?: (bot: Bot) => void }> = [
+  const plugins: Array<{
+    enabled?: boolean;
+    exportName: string;
+    packageName: string;
+    configure?: (bot: Bot) => void | Promise<void>;
+    factory?: (loaded: Record<string, unknown> & { default?: unknown }) => GenericBotPlugin | undefined;
+    runner?: (bot: Bot) => Promise<void>;
+  }> = [
     {
       packageName: "mineflayer-tool",
       exportName: "plugin",
@@ -699,16 +708,106 @@ async function loadOptionalMineflayerPlugins(activeBot: Bot): Promise<void> {
         maybeAutoEat.autoEat?.disableAuto?.();
       },
     },
+    {
+      packageName: "mineflayer-armor-manager",
+      exportName: "default",
+      enabled: readBoolean(process.env.BLOCKPILOT_ARMOR_MANAGER, false),
+      configure: async (botToConfigure) => {
+        const maybeArmorBot = botToConfigure as Bot & {
+          armorManager?: {
+            equipAll?: () => Promise<void> | void;
+          };
+        };
+        await maybeArmorBot.armorManager?.equipAll?.();
+      },
+    },
+    {
+      packageName: "mineflayer-tps",
+      exportName: "factory",
+      enabled: readBoolean(process.env.BLOCKPILOT_TPS_PLUGIN, false),
+      factory: (loaded) => {
+        const factory = typeof loaded.default === "function" ? loaded.default : undefined;
+        const plugin = factory?.(mineflayerPackage);
+        return typeof plugin === "function" ? (plugin as GenericBotPlugin) : undefined;
+      },
+    },
+    {
+      packageName: "minecrafthawkeye",
+      exportName: "default",
+      enabled: readBoolean(process.env.BLOCKPILOT_HAWKEYE, false),
+    },
+    {
+      packageName: "mineflayer-dashboard",
+      exportName: "default",
+      enabled: readBoolean(process.env.BLOCKPILOT_DASHBOARD, false),
+      factory: (loaded) => {
+        const exported = typeof loaded.default === "function" ? loaded.default : undefined;
+        if (!exported) {
+          return undefined;
+        }
+        const pluginOrFactoryResult = exported({
+          chatPattern: /^<([^>]+)> (.*)$/u,
+        });
+        return typeof pluginOrFactoryResult === "function" ? (pluginOrFactoryResult as GenericBotPlugin) : (exported as GenericBotPlugin);
+      },
+    },
+    {
+      packageName: "prismarine-viewer",
+      exportName: "mineflayer",
+      enabled: readBoolean(process.env.BLOCKPILOT_VIEWER, false),
+      runner: async (botToConfigure) => {
+        const loaded = (await importOptionalPackage("prismarine-viewer")) as Record<string, unknown> & {
+          default?: Record<string, unknown>;
+        };
+        const viewer = loaded.mineflayer ?? loaded.default?.mineflayer;
+        if (typeof viewer !== "function") {
+          throw new Error("prismarine-viewer did not export mineflayer");
+        }
+        viewer(botToConfigure, {
+          port: readInteger(process.env.BLOCKPILOT_VIEWER_PORT, 3007),
+          firstPerson: readBoolean(process.env.BLOCKPILOT_VIEWER_FIRST_PERSON, false),
+        });
+      },
+    },
+    {
+      packageName: "mineflayer-web-inventory",
+      exportName: "default",
+      enabled: readBoolean(process.env.BLOCKPILOT_WEB_INVENTORY, false),
+      runner: async (botToConfigure) => {
+        const loaded = (await importOptionalPackage("mineflayer-web-inventory")) as Record<string, unknown> & {
+          default?: unknown;
+        };
+        const inventoryViewer = typeof loaded.default === "function" ? loaded.default : undefined;
+        if (!inventoryViewer) {
+          throw new Error("mineflayer-web-inventory did not export a function");
+        }
+        inventoryViewer(botToConfigure, {
+          port: readInteger(process.env.BLOCKPILOT_WEB_INVENTORY_PORT, 3008),
+        });
+      },
+    },
   ];
 
   for (const plugin of plugins) {
+    if (plugin.enabled === false) {
+      continue;
+    }
+
     try {
-      const loaded = (await import(plugin.packageName)) as Record<string, unknown> & {
+      if (plugin.runner) {
+        await plugin.runner(activeBot);
+        console.log(`[bot-worker] optional integration started: ${plugin.packageName}`);
+        continue;
+      }
+
+      const loaded = (await importOptionalPackage(plugin.packageName)) as Record<string, unknown> & {
         default?: Record<string, unknown> | ((bot: Bot) => void);
       };
       const mineflayerPlugin =
+        plugin.factory?.(loaded) ??
         loaded[plugin.exportName] ??
         (typeof loaded.default === "object" && loaded.default ? loaded.default[plugin.exportName] : undefined) ??
+        (plugin.exportName === "default" && typeof loaded.default === "function" ? loaded.default : undefined) ??
         (plugin.exportName === "plugin" && typeof loaded.default === "function" ? loaded.default : undefined);
 
       if (typeof mineflayerPlugin !== "function") {
@@ -723,6 +822,11 @@ async function loadOptionalMineflayerPlugins(activeBot: Bot): Promise<void> {
       console.warn(`[bot-worker] optional plugin unavailable: ${plugin.packageName} (${asErrorMessage(error)})`);
     }
   }
+}
+
+async function importOptionalPackage(packageName: string): Promise<unknown> {
+  const dynamicImport = new Function("specifier", "return import(specifier)") as (specifier: string) => Promise<unknown>;
+  return dynamicImport(packageName);
 }
 
 function publishStatus(): void {
@@ -1489,6 +1593,22 @@ function readAuthMode(value: string | undefined): AuthMode {
   }
 
   return "offline";
+}
+
+function readBoolean(value: string | undefined, fallback: boolean): boolean {
+  if (value === undefined) {
+    return fallback;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (["1", "true", "yes", "on", "enabled"].includes(normalized)) {
+    return true;
+  }
+  if (["0", "false", "no", "off", "disabled"].includes(normalized)) {
+    return false;
+  }
+
+  return fallback;
 }
 
 function readInteger(value: string | undefined, fallback: number): number {
