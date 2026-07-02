@@ -16,6 +16,7 @@ const { Vec3 } = vec3Package;
 type MineflayerBlock = NonNullable<ReturnType<Bot["blockAt"]>>;
 type MineflayerEntity = Bot["entity"];
 type MineflayerItem = ReturnType<Bot["inventory"]["items"]>[number];
+type MineflayerRecipe = ReturnType<Bot["recipesFor"]>[number];
 type EnhancedBot = Bot & {
   autoEat?: {
     eat?: (options?: Record<string, unknown>) => Promise<void>;
@@ -153,6 +154,13 @@ const PLACE_FACES = [
   { offset: new Vec3(0, 0, -1), face: new Vec3(0, 0, 1) },
   { offset: new Vec3(0, 0, 1), face: new Vec3(0, 0, -1) },
 ];
+const BUILD_PRESETS = ["starter_hut", "platform", "pillar"] as const;
+type BuildPresetName = (typeof BUILD_PRESETS)[number];
+interface BuildBlockSpec {
+  x: number;
+  y: number;
+  z: number;
+}
 
 export const coreActionsPlugin: WorkerPlugin = {
   id: "blockpilot.core-actions",
@@ -289,19 +297,43 @@ export const coreActionsPlugin: WorkerPlugin = {
               type: "string",
               description: "Minecraft block name or comma-separated names, such as dirt,grass_block.",
             },
+            areaSize: {
+              type: "number",
+              description: "Optional square footprint size to dig, from 2 for 2x2 up to 16 for 16x16.",
+              minimum: 1,
+              maximum: 16,
+            },
+            areaWidth: {
+              type: "number",
+              description: "Optional rectangular footprint width on the X axis, up to 16.",
+              minimum: 1,
+              maximum: 16,
+            },
+            areaDepth: {
+              type: "number",
+              description: "Optional rectangular footprint depth on the Z axis, up to 16.",
+              minimum: 1,
+              maximum: 16,
+            },
+            areaHeight: {
+              type: "number",
+              description: "Optional vertical height to include, up to 16. Defaults to 1.",
+              minimum: 1,
+              maximum: 16,
+            },
             maxDistance: {
               type: "number",
               description: "Maximum search distance in blocks.",
-              default: 6,
+              default: 16,
               minimum: 1,
-              maximum: 32,
+              maximum: 128,
             },
             count: {
               type: "number",
               description: "Maximum number of matching blocks to dig.",
               default: 1,
               minimum: 1,
-              maximum: 16,
+              maximum: 256,
             },
             settleMs: {
               type: "number",
@@ -343,21 +375,33 @@ export const coreActionsPlugin: WorkerPlugin = {
       async (action) => {
         const bot = ctx.minecraft.requireBot();
         const blockNames = parseBlockNames(requireStringArg(action, "blockName"));
-        const maxDistance = clamp(getOptionalNumberArg(action, "maxDistance") ?? 6, 1, 32);
-        const count = Math.floor(clamp(getOptionalNumberArg(action, "count") ?? 1, 1, 16));
+        const maxDistance = clamp(getOptionalNumberArg(action, "maxDistance") ?? 16, 1, 128);
+        const area = getDigAreaArgs(action);
+        const defaultCount = area.enabled ? area.width * area.depth * area.height : 1;
+        const count = Math.floor(clamp(getOptionalNumberArg(action, "count") ?? defaultCount, 1, 256));
         const settleMs = Math.floor(clamp(getOptionalNumberArg(action, "settleMs") ?? 300, 0, 3_000));
         const waitForDropMs = Math.floor(clamp(getOptionalNumberArg(action, "waitForDropMs") ?? 700, 0, 5_000));
         const confirmTimeoutMs = getOptionalNumberArg(action, "confirmTimeoutMs");
         const exactPosition = getOptionalBlockPositionArg(action);
-        const targetCount = exactPosition ? 1 : count;
+        const targetCount = exactPosition && !area.enabled ? 1 : count;
         const dug: Array<{ name: string; x: number; y: number; z: number }> = [];
+        let areaTargets: MineflayerBlock[] | undefined;
 
         ctx.minecraft.stopCurrentControls(`Digging ${[...blockNames].join(",")}`);
 
         for (let index = 0; index < targetCount; index += 1) {
-          const block = exactPosition
-            ? resolveExactBlock(bot, exactPosition, blockNames, maxDistance, (candidate) => bot.canDigBlock(candidate), "diggable")
-            : findNearestDiggableBlock(bot, blockNames, maxDistance);
+          if (area.enabled && !areaTargets) {
+            const anchor = exactPosition
+              ? resolveExactBlock(bot, exactPosition, blockNames, maxDistance, (candidate) => bot.canDigBlock(candidate), "diggable")
+              : findNearestDiggableBlock(bot, blockNames, maxDistance);
+            areaTargets = anchor ? findDiggableBlocksInArea(bot, blockNames, maxDistance, anchor, area).slice(0, targetCount) : [];
+          }
+
+          const block = area.enabled
+            ? areaTargets?.find((candidate) => !dug.some((item) => positionsEqual(candidate.position, item)))
+            : exactPosition
+              ? resolveExactBlock(bot, exactPosition, blockNames, maxDistance, (candidate) => bot.canDigBlock(candidate), "diggable")
+              : findNearestDiggableBlock(bot, blockNames, maxDistance);
           if (!block) {
             break;
           }
@@ -399,6 +443,9 @@ export const coreActionsPlugin: WorkerPlugin = {
             blockName: [...blockNames].join(","),
             confirmed: true,
             blocks: dug,
+            areaDepth: area.depth,
+            areaHeight: area.height,
+            areaWidth: area.width,
             settleMs,
             waitForDropMs,
             ...(confirmTimeoutMs === undefined ? {} : { confirmTimeoutMs }),
@@ -451,25 +498,9 @@ export const coreActionsPlugin: WorkerPlugin = {
         const y = Math.floor(requireNumberArg(action, "y"));
         const z = Math.floor(requireNumberArg(action, "z"));
         const confirmTimeoutMs = clamp(getOptionalNumberArg(action, "confirmTimeoutMs") ?? 3_000, 500, 15_000);
-        const item = findInventoryItem(bot, itemName);
-        if (!item) {
-          throw new Error(`No inventory item '${itemName}' found`);
-        }
-
         const targetPosition = new Vec3(x, y, z);
-        const placement = findPlacementReference(bot, targetPosition);
-        if (!placement) {
-          throw new Error(`No adjacent reference block found for placement at ${x}, ${y}, ${z}`);
-        }
-
         ctx.minecraft.stopCurrentControls(`Placing ${itemName} at ${x},${y},${z}`);
-        await bot.equip(item, "hand");
-        await bot.lookAt(new Vec3(x + 0.5, y + 0.5, z + 0.5), true);
-        await bot.placeBlock(placement.referenceBlock, placement.faceVector);
-        const placedBlock = await waitForPlacedBlock(bot, targetPosition, confirmTimeoutMs);
-        if (!placedBlock) {
-          throw new Error(`Place did not create a block at ${x}, ${y}, ${z} within ${confirmTimeoutMs}ms`);
-        }
+        const placedBlock = await placeInventoryBlock(bot, itemName, targetPosition, confirmTimeoutMs);
 
         return {
           ok: true,
@@ -482,6 +513,178 @@ export const coreActionsPlugin: WorkerPlugin = {
             y,
             z,
             confirmTimeoutMs,
+          },
+        };
+      },
+    );
+
+    ctx.actions.register(
+      {
+        name: "craft_item",
+        description: "Craft an item from inventory materials using Mineflayer recipes and a nearby crafting table when needed.",
+        source: "builtin",
+        parameters: {
+          type: "object",
+          properties: {
+            itemName: {
+              type: "string",
+              description: "Minecraft item name to craft, such as oak_planks, crafting_table, stick, or wooden_axe.",
+            },
+            count: {
+              type: "number",
+              description: "Number of recipe crafts to attempt.",
+              default: 1,
+              minimum: 1,
+              maximum: 64,
+            },
+            maxDistance: {
+              type: "number",
+              description: "Maximum distance to search for a crafting table.",
+              default: 6,
+              minimum: 1,
+              maximum: 32,
+            },
+          },
+          required: ["itemName"],
+          additionalProperties: false,
+        },
+      },
+      async (action) => {
+        const bot = ctx.minecraft.requireBot();
+        const itemName = normalizeEntityOrItemAlias(requireStringArg(action, "itemName"));
+        const count = Math.floor(clamp(getOptionalNumberArg(action, "count") ?? 1, 1, 64));
+        const maxDistance = clamp(getOptionalNumberArg(action, "maxDistance") ?? 6, 1, 32);
+        const item = bot.registry.itemsByName[itemName];
+        if (!item) {
+          throw new Error(`Unknown craft item '${itemName}'`);
+        }
+
+        const beforeCount = countInventoryItemsByType(bot, item.id);
+        const craftingTable = findNearestBlock(bot, new Set(["crafting_table"]), maxDistance);
+        const recipe = findCraftingRecipe(bot, item.id, count, craftingTable);
+        if (!recipe) {
+          const tableHint = craftingTable ? "with nearby crafting table" : "without a nearby crafting table";
+          throw new Error(`No recipe available for '${itemName}' ${tableHint}; materials or crafting table may be missing`);
+        }
+
+        ctx.minecraft.stopCurrentControls(`Crafting ${itemName}`);
+        if (craftingTable && bot.entity.position.distanceTo(craftingTable.position) > 4) {
+          await ctx.minecraft.goToPosition(craftingTable.position.x, craftingTable.position.y, craftingTable.position.z, 3, {
+            timeoutMs: 12_000,
+            waitForArrival: true,
+          });
+        }
+        await bot.craft(recipe, count, craftingTable ?? undefined);
+        const expectedIncrease = getRecipeResultCount(recipe) * count;
+        const confirmed = await waitForInventoryCountAtLeast(bot, item.id, beforeCount + expectedIncrease, 5_000);
+        if (!confirmed) {
+          throw new Error(`Crafted '${itemName}' but inventory count did not increase by ${expectedIncrease} within 5000ms`);
+        }
+
+        return {
+          ok: true,
+          message: `Crafted ${count} ${itemName}`,
+          data: {
+            itemName,
+            count,
+            expectedIncrease,
+            inventoryConfirmed: true,
+            beforeCount,
+            afterCount: countInventoryItemsByType(bot, item.id),
+            usedCraftingTable: Boolean(craftingTable),
+          },
+        };
+      },
+    );
+
+    ctx.actions.register(
+      {
+        name: "build_preset",
+        description: "Build a small preset structure from inventory blocks using confirmed Mineflayer block placement.",
+        source: "builtin",
+        parameters: {
+          type: "object",
+          properties: {
+            preset: {
+              type: "string",
+              description: "Preset name to build.",
+              enum: [...BUILD_PRESETS],
+            },
+            materialItemName: {
+              type: "string",
+              description: "Inventory block item to use for the structure.",
+              default: "oak_planks",
+            },
+            x: {
+              type: "number",
+              description: "Optional anchor x coordinate. Defaults near the bot.",
+            },
+            y: {
+              type: "number",
+              description: "Optional anchor y coordinate. Defaults to the bot's current block level.",
+            },
+            z: {
+              type: "number",
+              description: "Optional anchor z coordinate. Defaults near the bot.",
+            },
+            confirmTimeoutMs: {
+              type: "number",
+              description: "Maximum time to confirm each placed block.",
+              default: 3000,
+              minimum: 500,
+              maximum: 15000,
+            },
+          },
+          required: ["preset"],
+          additionalProperties: false,
+        },
+      },
+      async (action) => {
+        const bot = ctx.minecraft.requireBot();
+        const preset = requireBuildPresetName(action);
+        const materialItemName = normalizeEntityOrItemAlias(getOptionalStringArg(action, "materialItemName") ?? "oak_planks");
+        const confirmTimeoutMs = clamp(getOptionalNumberArg(action, "confirmTimeoutMs") ?? 3_000, 500, 15_000);
+        const anchor = getBuildAnchor(bot, action);
+        const blocks = createBuildPresetBlocks(preset, anchor);
+        const emptyTargets = blocks.filter((block) => {
+          const current = bot.blockAt(new Vec3(block.x, block.y, block.z));
+          return !current || AIR_BLOCK_NAMES.has(current.name);
+        });
+        const available = countInventoryItemsByName(bot, materialItemName);
+        if (available < emptyTargets.length) {
+          throw new Error(
+            `Need ${emptyTargets.length} ${materialItemName} for ${preset}, but inventory has ${available}. Collect or craft materials first.`,
+          );
+        }
+
+        ctx.minecraft.stopCurrentControls(`Building ${preset}`);
+        const placed: Array<{ blockName: string; x: number; y: number; z: number }> = [];
+        for (const target of emptyTargets) {
+          const targetPosition = new Vec3(target.x, target.y, target.z);
+          if (bot.entity.position.distanceTo(targetPosition) > 4.5) {
+            await ctx.minecraft.goToPosition(target.x, target.y, target.z, 3, {
+              timeoutMs: 15_000,
+              waitForArrival: true,
+            });
+          }
+          const placedBlock = await placeInventoryBlock(bot, materialItemName, targetPosition, confirmTimeoutMs);
+          placed.push({
+            blockName: placedBlock.name,
+            ...target,
+          });
+        }
+
+        return {
+          ok: true,
+          message: `Built ${preset} with ${placed.length} placed block(s)`,
+          data: {
+            preset,
+            materialItemName,
+            placedCount: placed.length,
+            requiredCount: emptyTargets.length,
+            blocks: placed,
+            confirmed: true,
+            ...toPositionData(anchor),
           },
         };
       },
@@ -1308,6 +1511,30 @@ function toPositionData(position: Vec3Type): { x: number; y: number; z: number }
   };
 }
 
+interface DigAreaArgs {
+  depth: number;
+  enabled: boolean;
+  height: number;
+  width: number;
+}
+
+function getDigAreaArgs(action: Parameters<typeof getArgs>[0]): DigAreaArgs {
+  const areaSize = getOptionalNumberArg(action, "areaSize");
+  const width = getOptionalNumberArg(action, "areaWidth") ?? areaSize ?? 1;
+  const depth = getOptionalNumberArg(action, "areaDepth") ?? areaSize ?? 1;
+  const height = getOptionalNumberArg(action, "areaHeight") ?? 1;
+  const normalized = {
+    depth: Math.floor(clamp(depth, 1, 16)),
+    height: Math.floor(clamp(height, 1, 16)),
+    width: Math.floor(clamp(width, 1, 16)),
+  };
+
+  return {
+    ...normalized,
+    enabled: normalized.width > 1 || normalized.depth > 1 || normalized.height > 1,
+  };
+}
+
 function parseBlockNames(value: string): Set<string> {
   const names = value
     .split(",")
@@ -1358,6 +1585,65 @@ function findNearestDiggableBlock(bot: Bot, names: Set<string>, maxDistance: num
   return findNearestBlock(bot, names, maxDistance, (block) => bot.canDigBlock(block));
 }
 
+function findDiggableBlocksInArea(
+  bot: Bot,
+  names: Set<string>,
+  maxDistance: number,
+  anchor: MineflayerBlock,
+  area: DigAreaArgs,
+): MineflayerBlock[] {
+  const bounds = createAreaBounds(anchor.position, area);
+  const positions = bot.findBlocks({
+    point: bot.entity.position,
+    matching: (block) => matchesBlockName(block.name, names),
+    maxDistance,
+    count: Math.max(256, area.width * area.depth * area.height * 4),
+  });
+
+  return positions
+    .map((position) => bot.blockAt(position))
+    .filter((block): block is MineflayerBlock => Boolean(block))
+    .filter((block) => isPositionInsideBounds(block.position, bounds))
+    .filter((block) => bot.canDigBlock(block))
+    .sort((a, b) => a.position.distanceTo(bot.entity.position) - b.position.distanceTo(bot.entity.position));
+}
+
+function createAreaBounds(
+  anchor: Vec3Type,
+  area: DigAreaArgs,
+): { maxX: number; maxY: number; maxZ: number; minX: number; minY: number; minZ: number } {
+  const minX = anchor.x - Math.floor((area.width - 1) / 2);
+  const minY = anchor.y;
+  const minZ = anchor.z - Math.floor((area.depth - 1) / 2);
+
+  return {
+    maxX: minX + area.width - 1,
+    maxY: minY + area.height - 1,
+    maxZ: minZ + area.depth - 1,
+    minX,
+    minY,
+    minZ,
+  };
+}
+
+function isPositionInsideBounds(
+  position: Vec3Type,
+  bounds: { maxX: number; maxY: number; maxZ: number; minX: number; minY: number; minZ: number },
+): boolean {
+  return (
+    position.x >= bounds.minX &&
+    position.x <= bounds.maxX &&
+    position.y >= bounds.minY &&
+    position.y <= bounds.maxY &&
+    position.z >= bounds.minZ &&
+    position.z <= bounds.maxZ
+  );
+}
+
+function positionsEqual(left: Vec3Type, right: { x: number; y: number; z: number }): boolean {
+  return left.x === right.x && left.y === right.y && left.z === right.z;
+}
+
 function resolveExactBlock(
   bot: Bot,
   position: Vec3Type,
@@ -1399,7 +1685,7 @@ function findNearestBlock(
     point: bot.entity.position,
     matching: (block) => matchesBlockName(block.name, names),
     maxDistance,
-    count: 128,
+    count: 1024,
   });
 
   return positions
@@ -1508,6 +1794,132 @@ function isProtectedInventoryItem(item: MineflayerItem): boolean {
 
 function findInventoryItem(bot: Bot, itemName: string): ReturnType<Bot["inventory"]["items"]>[number] | undefined {
   return bot.inventory.items().find((item) => matchesItemName(item, itemName));
+}
+
+async function placeInventoryBlock(
+  bot: Bot,
+  itemName: string,
+  targetPosition: Vec3Type,
+  confirmTimeoutMs: number,
+): Promise<MineflayerBlock> {
+  const item = findInventoryItem(bot, itemName);
+  if (!item) {
+    throw new Error(`No inventory item '${itemName}' found`);
+  }
+
+  const placement = findPlacementReference(bot, targetPosition);
+  if (!placement) {
+    throw new Error(`No adjacent reference block found for placement at ${targetPosition.x}, ${targetPosition.y}, ${targetPosition.z}`);
+  }
+
+  await bot.equip(item, "hand");
+  await bot.lookAt(targetPosition.offset(0.5, 0.5, 0.5), true);
+  await bot.placeBlock(placement.referenceBlock, placement.faceVector);
+  const placedBlock = await waitForPlacedBlock(bot, targetPosition, confirmTimeoutMs);
+  if (!placedBlock) {
+    throw new Error(
+      `Place did not create a block at ${targetPosition.x}, ${targetPosition.y}, ${targetPosition.z} within ${confirmTimeoutMs}ms`,
+    );
+  }
+
+  return placedBlock;
+}
+
+function findCraftingRecipe(
+  bot: Bot,
+  itemType: number,
+  count: number,
+  craftingTable: MineflayerBlock | undefined,
+): MineflayerRecipe | undefined {
+  return (
+    (craftingTable ? bot.recipesFor(itemType, null, count, craftingTable)[0] : undefined) ??
+    bot.recipesFor(itemType, null, count, null)[0] ??
+    bot.recipesFor(itemType, null, count, craftingTable ?? false)[0]
+  );
+}
+
+function getRecipeResultCount(recipe: MineflayerRecipe): number {
+  const maybeRecipe = recipe as MineflayerRecipe & {
+    result?: {
+      count?: number;
+    };
+  };
+  const value = maybeRecipe.result?.count;
+  return typeof value === "number" && Number.isFinite(value) ? value : 1;
+}
+
+function requireBuildPresetName(action: Parameters<typeof getArgs>[0]): BuildPresetName {
+  const value = normalizeEntityOrItemAlias(requireStringArg(action, "preset"));
+  if (BUILD_PRESETS.includes(value as BuildPresetName)) {
+    return value as BuildPresetName;
+  }
+
+  throw new Error(`Unknown build preset '${value}'. Expected ${BUILD_PRESETS.join(", ")}`);
+}
+
+function getBuildAnchor(bot: Bot, action: Parameters<typeof getArgs>[0]): Vec3Type {
+  const exactPosition = getOptionalBlockPositionArg(action);
+  if (exactPosition) {
+    return exactPosition;
+  }
+
+  return new Vec3(Math.floor(bot.entity.position.x) + 2, Math.floor(bot.entity.position.y), Math.floor(bot.entity.position.z) + 2);
+}
+
+function createBuildPresetBlocks(preset: BuildPresetName, anchor: Vec3Type): BuildBlockSpec[] {
+  switch (preset) {
+    case "platform":
+      return createPlatformBlocks(anchor, 5, 5);
+    case "pillar":
+      return createPillarBlocks(anchor, 4);
+    case "starter_hut":
+      return createStarterHutBlocks(anchor);
+  }
+}
+
+function createPlatformBlocks(anchor: Vec3Type, width: number, depth: number): BuildBlockSpec[] {
+  const blocks: BuildBlockSpec[] = [];
+  for (let dx = 0; dx < width; dx += 1) {
+    for (let dz = 0; dz < depth; dz += 1) {
+      blocks.push({
+        x: anchor.x + dx,
+        y: anchor.y,
+        z: anchor.z + dz,
+      });
+    }
+  }
+
+  return blocks;
+}
+
+function createPillarBlocks(anchor: Vec3Type, height: number): BuildBlockSpec[] {
+  return Array.from({ length: height }, (_, index) => ({
+    x: anchor.x,
+    y: anchor.y + index,
+    z: anchor.z,
+  }));
+}
+
+function createStarterHutBlocks(anchor: Vec3Type): BuildBlockSpec[] {
+  const blocks = createPlatformBlocks(anchor, 5, 5);
+  for (let yOffset = 1; yOffset <= 3; yOffset += 1) {
+    for (let dx = 0; dx < 5; dx += 1) {
+      for (let dz = 0; dz < 5; dz += 1) {
+        const isWall = dx === 0 || dx === 4 || dz === 0 || dz === 4;
+        const isDoorway = dx === 2 && dz === 0 && yOffset <= 2;
+        if (isWall && !isDoorway) {
+          blocks.push({
+            x: anchor.x + dx,
+            y: anchor.y + yOffset,
+            z: anchor.z + dz,
+          });
+        }
+      }
+    }
+  }
+
+  blocks.push(...createPlatformBlocks(anchor.offset(0, 4, 0), 5, 5));
+  return blocks;
 }
 
 function matchesItemName(item: MineflayerItem, itemName: string): boolean {

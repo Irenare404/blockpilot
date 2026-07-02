@@ -8,6 +8,7 @@ type AgentCommand =
     }
   | {
       name: "dig";
+      areaSize?: number;
       chat: ChatMessageSnapshot;
       blockName: string;
     }
@@ -34,6 +35,18 @@ type AgentCommand =
       x: number;
       y: number;
       z: number;
+    }
+  | {
+      name: "craft_item";
+      chat: ChatMessageSnapshot;
+      count?: number;
+      itemName: string;
+    }
+  | {
+      name: "build_preset";
+      chat: ChatMessageSnapshot;
+      materialItemName?: string;
+      preset: "starter_hut" | "platform" | "pillar";
     }
   | {
       name:
@@ -190,6 +203,16 @@ function parseCommand(chat: ChatMessageSnapshot, commandPrefix: string): AgentCo
     return { name: "place_block", chat, ...placeCommand };
   }
 
+  const craftCommand = parseCraftCommand(command);
+  if (craftCommand) {
+    return { name: "craft_item", chat, ...craftCommand };
+  }
+
+  const buildCommand = parseBuildCommand(command);
+  if (buildCommand) {
+    return { name: "build_preset", chat, ...buildCommand };
+  }
+
   const useBlockName = parseUseBlockName(command);
   if (useBlockName) {
     return { name: "use_block", chat, blockName: useBlockName };
@@ -205,9 +228,9 @@ function parseCommand(chat: ChatMessageSnapshot, commandPrefix: string): AgentCo
     return { name: "attack", chat, ...attackCommand };
   }
 
-  const digBlockName = parseDigBlockName(command);
-  if (digBlockName) {
-    return { name: "dig", chat, blockName: digBlockName };
+  const digCommand = parseDigCommand(command);
+  if (digCommand) {
+    return { name: "dig", chat, ...digCommand };
   }
 
   if (FOLLOW_ALIASES.has(command)) {
@@ -264,6 +287,10 @@ function executeCommand(command: AgentCommand, context: PlannerContext): AgentPl
       return createCollectItemPlan(context);
     case "place_block":
       return createPlaceBlockPlan(command, context);
+    case "craft_item":
+      return createCraftItemPlan(command, context);
+    case "build_preset":
+      return createBuildPresetPlan(command, context);
     case "task_collect":
       return createCollectTaskPlan(context);
     case "task_storage":
@@ -308,7 +335,7 @@ function addressedPlan(steps: AgentPlan["steps"]): AgentPlan {
 
 function createHelpMessage(capabilities: BotCapability[], prefix: string): string {
   const names = capabilities.map((capability) => capability.name).sort().join(", ");
-  return `Agent commands: ${prefix} help/status/where/world/follow/stop/home/sethome/go home/memory/dig dirt/drop dirt/attack zombie/container/use door/collect item/place dirt x y z/task collect/task storage/patrol. Tools: ${names || "none"}.`;
+  return `Agent commands: ${prefix} help/status/where/world/follow/stop/home/sethome/go home/memory/dig dirt/drop dirt/craft planks/build house/attack zombie/container/use door/collect item/place dirt x y z/task collect/task storage/patrol. Tools: ${names || "none"}.`;
 }
 
 function createPositionMessage(world: WorldSnapshot): string {
@@ -412,8 +439,9 @@ function createDigPlan(command: Extract<AgentCommand, { name: "dig" }>, context:
         name: "dig_nearest_block",
         args: {
           blockName: command.blockName,
+          ...(command.areaSize ? { areaSize: command.areaSize } : {}),
           maxDistance: 6,
-          count: 1,
+          count: command.areaSize ? command.areaSize * command.areaSize : 1,
         },
       },
     },
@@ -552,6 +580,46 @@ function createPlaceBlockPlan(command: Extract<AgentCommand, { name: "place_bloc
   ]);
 }
 
+function createCraftItemPlan(command: Extract<AgentCommand, { name: "craft_item" }>, context: PlannerContext): AgentPlan {
+  if (!hasCapability(context.world.capabilities, "craft_item")) {
+    return addressedPlan([{ type: "say", message: "I understood the craft request, but craft_item is unavailable." }]);
+  }
+
+  return addressedPlan([
+    { type: "say", message: `Crafting ${command.itemName}.` },
+    {
+      type: "action",
+      action: {
+        name: "craft_item",
+        args: {
+          itemName: command.itemName,
+          ...(command.count === undefined ? {} : { count: command.count }),
+        },
+      },
+    },
+  ]);
+}
+
+function createBuildPresetPlan(command: Extract<AgentCommand, { name: "build_preset" }>, context: PlannerContext): AgentPlan {
+  if (!hasCapability(context.world.capabilities, "build_preset")) {
+    return addressedPlan([{ type: "say", message: "I understood the build request, but build_preset is unavailable." }]);
+  }
+
+  return addressedPlan([
+    { type: "say", message: `Building ${command.preset}.` },
+    {
+      type: "action",
+      action: {
+        name: "build_preset",
+        args: {
+          preset: command.preset,
+          ...(command.materialItemName === undefined ? {} : { materialItemName: command.materialItemName }),
+        },
+      },
+    },
+  ]);
+}
+
 function createCollectTaskPlan(context: PlannerContext): AgentPlan {
   if (!hasCapability(context.world.capabilities, "collect_nearest_item")) {
     return addressedPlan([{ type: "say", message: "I cannot queue collection because collect_nearest_item is unavailable." }]);
@@ -663,16 +731,32 @@ function normalizeSpacing(message: string): string {
   return message.trim().toLowerCase().replace(/\s+/gu, " ");
 }
 
-function parseDigBlockName(command: string): string | undefined {
+function parseDigCommand(command: string): { areaSize?: number; blockName: string } | undefined {
   for (const prefix of ["dig ", "mine ", "chop ", "cut ", "\u6316 ", "\u780D ", "\u4F10 "]) {
     if (!command.startsWith(prefix)) {
       continue;
     }
 
-    return normalizeRequestedBlockName(command.slice(prefix.length), true);
+    return parseDigTail(command.slice(prefix.length), true);
   }
 
-  return normalizeRequestedBlockName(command, false);
+  return parseDigTail(command, false);
+}
+
+function parseDigTail(value: string, allowUnknown: boolean): { areaSize?: number; blockName: string } | undefined {
+  const areaMatch = /(?:^|\s)(1[0-6]|[2-9])\s*[xX*]\s*\1(?:\s|$)/u.exec(value);
+  const areaValue = areaMatch?.[1];
+  const areaSize = areaValue ? clampInteger(Number.parseInt(areaValue, 10), 2, 16) : undefined;
+  const blockText = areaMatch ? value.replace(areaMatch[0], " ").trim() : value;
+  const blockName = normalizeRequestedBlockName(blockText, allowUnknown);
+  if (!blockName) {
+    return undefined;
+  }
+
+  return {
+    ...(areaSize ? { areaSize } : {}),
+    blockName,
+  };
 }
 
 function parseUseBlockName(command: string): string | undefined {
@@ -770,6 +854,79 @@ function parseAttackTail(value: string): { targetName?: string } {
   return targetName ? { targetName } : {};
 }
 
+function parseCraftCommand(command: string): { itemName: string; count?: number } | undefined {
+  for (const prefix of ["craft ", "make ", "\u5408\u6210 ", "\u5236\u4F5C "]) {
+    if (!command.startsWith(prefix)) {
+      continue;
+    }
+
+    return parseCraftTail(command.slice(prefix.length));
+  }
+
+  return undefined;
+}
+
+function parseCraftTail(value: string): { itemName: string; count?: number } | undefined {
+  const parts = normalizeSpacing(value).split(" ").filter(Boolean);
+  if (parts.length === 0) {
+    return undefined;
+  }
+
+  let count: number | undefined;
+  const first = Number.parseInt(parts[0] ?? "", 10);
+  if (Number.isFinite(first) && String(first) === parts[0]) {
+    count = clampInteger(first, 1, 64);
+    parts.shift();
+  }
+
+  const last = Number.parseInt(parts[parts.length - 1] ?? "", 10);
+  if (count === undefined && Number.isFinite(last) && String(last) === parts[parts.length - 1]) {
+    count = clampInteger(last, 1, 64);
+    parts.pop();
+  }
+
+  const itemName = normalizeRequestedItemName(parts.join(" "));
+  if (!itemName) {
+    return undefined;
+  }
+
+  return {
+    itemName,
+    ...(count === undefined ? {} : { count }),
+  };
+}
+
+function parseBuildCommand(command: string): { preset: "starter_hut" | "platform" | "pillar"; materialItemName?: string } | undefined {
+  for (const prefix of ["build ", "construct ", "\u5EFA\u9020 ", "\u76D6 ", "\u642D "]) {
+    if (!command.startsWith(prefix)) {
+      continue;
+    }
+
+    return parseBuildTail(command.slice(prefix.length));
+  }
+
+  return undefined;
+}
+
+function parseBuildTail(value: string): { preset: "starter_hut" | "platform" | "pillar"; materialItemName?: string } | undefined {
+  const normalized = normalizeSpacing(value);
+  if (!normalized) {
+    return undefined;
+  }
+
+  const preset = normalizeBuildPresetName(normalized);
+  if (!preset) {
+    return undefined;
+  }
+
+  const materialMatch = /(?:with|using|\u7528)\s+([a-z0-9_:\u4e00-\u9fa5]+)/u.exec(normalized);
+  const materialItemName = materialMatch?.[1] ? normalizeRequestedItemName(materialMatch[1]) : undefined;
+  return {
+    preset,
+    ...(materialItemName === undefined ? {} : { materialItemName }),
+  };
+}
+
 function parsePlaceCommand(command: string): { itemName: string; x: number; y: number; z: number } | undefined {
   const match = /^(?:place|put|\u653E\u7F6E|\u653E)\s+([a-z0-9_:\u4e00-\u9fa5]+)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)$/u.exec(command);
   if (!match?.[1] || !match[2] || !match[3] || !match[4]) {
@@ -801,9 +958,49 @@ function normalizeRequestedItemName(value: string): string | undefined {
     case "\u6728\u677F":
     case "planks":
       return "oak_planks";
+    case "\u5DE5\u4F5C\u53F0":
+      return "crafting_table";
+    case "\u6728\u68CD":
+      return "stick";
+    case "\u6728\u65A7":
+      return "wooden_axe";
+    case "\u6728\u9550":
+      return "wooden_pickaxe";
+    case "\u6728\u94F2":
+      return "wooden_shovel";
+    case "\u77F3\u65A7":
+      return "stone_axe";
+    case "\u77F3\u9550":
+      return "stone_pickaxe";
+    case "\u77F3\u94F2":
+      return "stone_shovel";
     default:
       return normalized;
   }
+}
+
+function normalizeBuildPresetName(value: string): "starter_hut" | "platform" | "pillar" | undefined {
+  const normalized = normalizeSpacing(value).replace(/^minecraft:/u, "").replace(/\s+/gu, "_");
+  if (
+    normalized.includes("starter_hut") ||
+    normalized.includes("hut") ||
+    normalized.includes("house") ||
+    normalized.includes("\u623F\u5B50") ||
+    normalized.includes("\u5C0F\u5C4B") ||
+    normalized.includes("\u6728\u5C4B")
+  ) {
+    return "starter_hut";
+  }
+
+  if (normalized.includes("platform") || normalized.includes("\u5E73\u53F0")) {
+    return "platform";
+  }
+
+  if (normalized.includes("pillar") || normalized.includes("tower") || normalized.includes("\u67F1") || normalized.includes("\u5854")) {
+    return "pillar";
+  }
+
+  return undefined;
 }
 
 function normalizeRequestedEntityName(value: string): string | undefined {

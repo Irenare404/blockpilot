@@ -364,10 +364,10 @@ function compactWorld(world: WorldSnapshot): Record<string, unknown> {
       others: world.entities.others.slice(0, 4),
     },
     blocks: {
-      nearbyDiggableBlocks: world.blocks.nearbyDiggableBlocks.slice(0, 8),
-      nearbyUtilityBlocks: world.blocks.nearbyUtilityBlocks.slice(0, 8),
-      nearbyDangerBlocks: world.blocks.nearbyDangerBlocks.slice(0, 8),
-      nearbyContainers: world.blocks.nearbyContainers.slice(0, 8),
+      nearbyDiggableBlocks: world.blocks.nearbyDiggableBlocks.slice(0, 24),
+      nearbyUtilityBlocks: world.blocks.nearbyUtilityBlocks.slice(0, 16),
+      nearbyDangerBlocks: world.blocks.nearbyDangerBlocks.slice(0, 16),
+      nearbyContainers: world.blocks.nearbyContainers.slice(0, 16),
       nearbySpawners: world.blocks.nearbySpawners.slice(0, 4),
     },
     self: {

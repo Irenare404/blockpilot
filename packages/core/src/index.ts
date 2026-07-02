@@ -69,6 +69,10 @@ export interface DigNearestBlockAction {
   name: "dig_nearest_block";
   args: {
     blockName: string;
+    areaDepth?: number;
+    areaHeight?: number;
+    areaSize?: number;
+    areaWidth?: number;
     maxDistance?: number;
     count?: number;
     settleMs?: number;
@@ -88,6 +92,27 @@ export interface PlaceBlockAction {
     y: number;
     z: number;
     confirmTimeoutMs?: number;
+  };
+}
+
+export interface CraftItemAction {
+  name: "craft_item";
+  args: {
+    count?: number;
+    itemName: string;
+    maxDistance?: number;
+  };
+}
+
+export interface BuildPresetAction {
+  name: "build_preset";
+  args: {
+    confirmTimeoutMs?: number;
+    materialItemName?: string;
+    preset: "starter_hut" | "platform" | "pillar";
+    x?: number;
+    y?: number;
+    z?: number;
   };
 }
 
@@ -181,6 +206,8 @@ export type BuiltInBotAction =
   | GoToPositionAction
   | DigNearestBlockAction
   | PlaceBlockAction
+  | CraftItemAction
+  | BuildPresetAction
   | UseNearestBlockAction
   | InspectNearestContainerAction
   | DepositItemToContainerAction

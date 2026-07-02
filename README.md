@@ -23,7 +23,7 @@ It supports:
 - A bot worker that joins a Java server through Mineflayer.
 - Worker registration through WebSocket.
 - Event streaming for bot status and Minecraft chat events.
-- Controlled actions: `chat`, `follow_player`, `go_to_position`, `dig_nearest_block`, `place_block`, `use_nearest_block`, `inspect_nearest_container`, `deposit_item_to_container`, `withdraw_item_from_container`, `collect_nearest_item`, `drop_item`, `attack_nearest_entity`, `eat_food`, `retreat_from_threat`, `report_position`, `world_snapshot`, and `stop`.
+- Controlled actions: `chat`, `follow_player`, `go_to_position`, `dig_nearest_block`, `place_block`, `craft_item`, `build_preset`, `use_nearest_block`, `inspect_nearest_container`, `deposit_item_to_container`, `withdraw_item_from_container`, `collect_nearest_item`, `drop_item`, `attack_nearest_entity`, `eat_food`, `retreat_from_threat`, `report_position`, `world_snapshot`, and `stop`.
 - Local world perception for entities, important blocks, inventory, equipment, and safety.
 - Safety reflexes for eating and retreating before the LLM planner runs.
 - Agent memory for home, places, nearby players, and recent observations.
@@ -94,6 +94,14 @@ Rule planner test commands in Minecraft chat:
 
 Use the LLM planner when you want natural language like `BlockPilot come here please` or Chinese phrases such as &#x4F60;&#x8FC7;&#x6765;&#x4E00;&#x4E0B; instead of mechanical command words.
 
+## Bot Worker Perception
+
+The bot worker publishes a world snapshot from loaded Minecraft chunks. Scan radii are configurable and capped at `128` blocks so the agent can reason about farther visible resources without pretending unloaded chunks exist:
+
+- `BLOCKPILOT_ENTITY_SCAN_RADIUS`: entity scan radius. Defaults to `64`.
+- `BLOCKPILOT_BLOCK_SCAN_RADIUS`: utility/container/danger block scan radius. Defaults to `64`.
+- `BLOCKPILOT_DIGGABLE_BLOCK_SCAN_RADIUS`: diggable block scan radius. Defaults to `48`.
+
 ## Gateway API
 
 ```bash
@@ -141,7 +149,7 @@ Dig nearby dirt or grass blocks:
 ```bash
 curl -X POST http://127.0.0.1:8787/bots/BlockPilot/actions \
   -H "content-type: application/json" \
-  -d "{\"name\":\"dig_nearest_block\",\"args\":{\"blockName\":\"dirt,grass_block\",\"maxDistance\":6,\"count\":1}}"
+  -d "{\"name\":\"dig_nearest_block\",\"args\":{\"blockName\":\"dirt,grass_block\",\"maxDistance\":16,\"count\":1}}"
 ```
 
 Dig an exact visible block:
@@ -152,7 +160,15 @@ curl -X POST http://127.0.0.1:8787/bots/BlockPilot/actions \
   -d "{\"name\":\"dig_nearest_block\",\"args\":{\"blockName\":\"snow\",\"x\":16,\"y\":66,\"z\":10,\"maxDistance\":8}}"
 ```
 
-`dig_nearest_block` waits for each dug block to change, gives nearby drops a short moment to appear, and then settles before selecting the next block. When `x`, `y`, and `z` are provided, it digs that exact block instead of picking the nearest match.
+Dig a small area, up to 16x16:
+
+```bat
+curl -X POST http://127.0.0.1:8787/bots/BlockPilot/actions ^
+  -H "content-type: application/json" ^
+  -d "{\"name\":\"dig_nearest_block\",\"args\":{\"blockName\":\"dirt,grass,grass_block\",\"areaSize\":3,\"maxDistance\":32}}"
+```
+
+`dig_nearest_block` waits for each dug block to change, gives nearby drops a short moment to appear, and then settles before selecting the next block. When `x`, `y`, and `z` are provided, it uses that block as the exact target or area anchor instead of picking the nearest match. `areaSize`, `areaWidth`, `areaDepth`, and `areaHeight` are capped at 16.
 
 Place a block at a coordinate:
 
@@ -161,6 +177,24 @@ curl -X POST http://127.0.0.1:8787/bots/BlockPilot/actions \
   -H "content-type: application/json" \
   -d "{\"name\":\"place_block\",\"args\":{\"itemName\":\"dirt\",\"x\":16,\"y\":66,\"z\":10}}"
 ```
+
+Craft an item from inventory materials:
+
+```bash
+curl -X POST http://127.0.0.1:8787/bots/BlockPilot/actions \
+  -H "content-type: application/json" \
+  -d "{\"name\":\"craft_item\",\"args\":{\"itemName\":\"oak_planks\",\"count\":1}}"
+```
+
+Build a preset structure from inventory blocks:
+
+```bash
+curl -X POST http://127.0.0.1:8787/bots/BlockPilot/actions \
+  -H "content-type: application/json" \
+  -d "{\"name\":\"build_preset\",\"args\":{\"preset\":\"platform\",\"materialItemName\":\"oak_planks\"}}"
+```
+
+`build_preset` currently supports `platform`, `pillar`, and `starter_hut`. It checks inventory before placing and confirms every block with Mineflayer placement.
 
 Use a nearby block such as a door, button, lever, chest, furnace, or crafting table:
 
@@ -312,7 +346,7 @@ Environment variables:
 - `BLOCKPILOT_AGENT_PLANNER`: `rule` or `llm`. Defaults to `rule`.
 - `BLOCKPILOT_AGENT_PREFIX`: in-game command prefix. Defaults to `!bp`.
 - `BLOCKPILOT_AGENT_ALIASES`: comma-separated names players may use for the bot, such as `bp,helper`.
-- `BLOCKPILOT_AGENT_ALLOWED_ACTIONS`: comma-separated action whitelist. Defaults to `chat,follow_player,go_to_position,dig_nearest_block,place_block,use_nearest_block,inspect_nearest_container,deposit_item_to_container,withdraw_item_from_container,collect_nearest_item,drop_item,attack_nearest_entity,stop,report_position,world_snapshot,eat_food,retreat_from_threat`.
+- `BLOCKPILOT_AGENT_ALLOWED_ACTIONS`: comma-separated action whitelist. Defaults to `chat,follow_player,go_to_position,dig_nearest_block,place_block,craft_item,build_preset,use_nearest_block,inspect_nearest_container,deposit_item_to_container,withdraw_item_from_container,collect_nearest_item,drop_item,attack_nearest_entity,stop,report_position,world_snapshot,eat_food,retreat_from_threat`.
 - `BLOCKPILOT_AGENT_TICK_MS`: polling interval. Defaults to `2000`.
 - `BLOCKPILOT_RESPONSE_DEDUP_MS`: suppress identical bot chat replies within this window; set to `0` while debugging to disable suppression. Defaults to `30000`.
 - `BLOCKPILOT_AGENT_DECISION_LOG`: decision log mode: `off`, `console`, `file`, `both`, or `true` for console. Defaults to `off`.

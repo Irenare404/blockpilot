@@ -55,14 +55,18 @@ interface WorkerConfig {
   gatewayUrl: string;
   mcHost: string;
   mcPort: number;
+  blockScanRadius: number;
+  diggableBlockScanRadius: number;
+  entityScanRadius: number;
   username: string;
   auth: AuthMode;
   version?: string;
 }
 
-const ENTITY_SCAN_RADIUS = 32;
-const BLOCK_SCAN_RADIUS = 12;
-const DIGGABLE_BLOCK_SCAN_RADIUS = 8;
+const DEFAULT_ENTITY_SCAN_RADIUS = 64;
+const DEFAULT_BLOCK_SCAN_RADIUS = 64;
+const DEFAULT_DIGGABLE_BLOCK_SCAN_RADIUS = 48;
+const MAX_SCAN_RADIUS = 128;
 const HOSTILE_ENTITY_NAMES = new Set([
   "blaze",
   "bogged",
@@ -848,7 +852,7 @@ function createEntitySnapshots(): WorldSnapshot["entities"] {
     }
 
     const distance = entity.position.distanceTo(botPosition);
-    if (distance > ENTITY_SCAN_RADIUS) {
+    if (distance > config.entityScanRadius) {
       continue;
     }
 
@@ -947,8 +951,8 @@ function createBlockSnapshots(): WorldSnapshot["blocks"] {
   const positions = activeBot.findBlocks({
     point: botPosition,
     matching: (block) => isTrackedBlock(block.name),
-    maxDistance: BLOCK_SCAN_RADIUS,
-    count: 128,
+    maxDistance: config.blockScanRadius,
+    count: 512,
   });
 
   for (const position of positions) {
@@ -977,8 +981,8 @@ function createBlockSnapshots(): WorldSnapshot["blocks"] {
   const diggablePositions = activeBot.findBlocks({
     point: botPosition,
     matching: (block) => isDiggableSnapshotCandidate(block.name),
-    maxDistance: DIGGABLE_BLOCK_SCAN_RADIUS,
-    count: 160,
+    maxDistance: config.diggableBlockScanRadius,
+    count: 1024,
   });
 
   for (const position of diggablePositions) {
@@ -996,11 +1000,11 @@ function createBlockSnapshots(): WorldSnapshot["blocks"] {
   sortByDistance(blocks.nearbyContainers);
   sortByDistance(blocks.nearbySpawners);
 
-  blocks.nearbyDiggableBlocks = dedupeBlocks(blocks.nearbyDiggableBlocks).slice(0, 48);
-  blocks.nearbyUtilityBlocks = blocks.nearbyUtilityBlocks.slice(0, 24);
-  blocks.nearbyDangerBlocks = blocks.nearbyDangerBlocks.slice(0, 24);
-  blocks.nearbyContainers = blocks.nearbyContainers.slice(0, 24);
-  blocks.nearbySpawners = blocks.nearbySpawners.slice(0, 12);
+  blocks.nearbyDiggableBlocks = dedupeBlocks(blocks.nearbyDiggableBlocks).slice(0, 128);
+  blocks.nearbyUtilityBlocks = blocks.nearbyUtilityBlocks.slice(0, 64);
+  blocks.nearbyDangerBlocks = blocks.nearbyDangerBlocks.slice(0, 64);
+  blocks.nearbyContainers = blocks.nearbyContainers.slice(0, 64);
+  blocks.nearbySpawners = blocks.nearbySpawners.slice(0, 24);
 
   return blocks;
 }
@@ -1460,6 +1464,14 @@ function readConfig(): WorkerConfig {
     gatewayUrl: process.env.BLOCKPILOT_GATEWAY_URL ?? "ws://127.0.0.1:8787/worker",
     mcHost,
     mcPort: readInteger(process.env.MC_PORT, 25565),
+    blockScanRadius: readClampedInteger(process.env.BLOCKPILOT_BLOCK_SCAN_RADIUS, DEFAULT_BLOCK_SCAN_RADIUS, 8, MAX_SCAN_RADIUS),
+    diggableBlockScanRadius: readClampedInteger(
+      process.env.BLOCKPILOT_DIGGABLE_BLOCK_SCAN_RADIUS,
+      DEFAULT_DIGGABLE_BLOCK_SCAN_RADIUS,
+      8,
+      MAX_SCAN_RADIUS,
+    ),
+    entityScanRadius: readClampedInteger(process.env.BLOCKPILOT_ENTITY_SCAN_RADIUS, DEFAULT_ENTITY_SCAN_RADIUS, 8, MAX_SCAN_RADIUS),
     username,
     auth: readAuthMode(process.env.MC_AUTH),
   };
@@ -1486,6 +1498,10 @@ function readInteger(value: string | undefined, fallback: number): number {
 
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function readClampedInteger(value: string | undefined, fallback: number, min: number, max: number): number {
+  return clamp(readInteger(value, fallback), min, max);
 }
 
 function round(value: number): number {
