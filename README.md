@@ -94,6 +94,8 @@ Rule planner test commands in Minecraft chat:
 
 Use the LLM planner when you want natural language like `BlockPilot come here please` or Chinese phrases such as &#x4F60;&#x8FC7;&#x6765;&#x4E00;&#x4E0B; instead of mechanical command words.
 
+Conversational gathering is supported for tree chopping. Say `BlockPilot 砍树`; the agent asks how many logs to collect. Reply with a number such as `20`, and it queues a repeat-until-inventory task that keeps finding and chopping logs until the requested amount is collected or you say `停止`.
+
 ## Bot Worker Perception
 
 The bot worker publishes a world snapshot from loaded Minecraft chunks. Scan radii are configurable and capped at `128` blocks so the agent can reason about farther visible resources without pretending unloaded chunks exist:

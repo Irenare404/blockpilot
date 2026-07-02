@@ -26,12 +26,38 @@ export interface ChatAgentConfig {
   taskQueue?: AgentTaskQueue;
 }
 
+interface PendingGatherRequest {
+  actionCount: number;
+  blockName: string;
+  expiresAt: number;
+  itemNames: string[];
+  label: string;
+  maxDistance: number;
+  username: string;
+}
+
+const GATHER_REQUEST_TTL_MS = 120_000;
+const LOG_ITEM_NAMES = [
+  "log",
+  "oak_log",
+  "spruce_log",
+  "birch_log",
+  "jungle_log",
+  "acacia_log",
+  "dark_oak_log",
+  "mangrove_log",
+  "cherry_log",
+  "pale_oak_log",
+];
+
 export class ChatAgent {
   private readonly client: GatewayClient;
   private readonly planner: AgentPlanner;
   private readonly config: ChatAgentConfig;
   private readonly handledChatKeys: string[] = [];
   private readonly handledChatSet = new Set<string>();
+  private pendingGatherRequest: PendingGatherRequest | undefined;
+  private activeGatherOwner: string | undefined;
   private readonly recentReplies: Array<{ key: string; sentAt: number }> = [];
 
   constructor(client: GatewayClient, planner: AgentPlanner, config: ChatAgentConfig) {
@@ -48,6 +74,9 @@ export class ChatAgent {
     const memory = this.config.memory;
 
     await memory?.observeWorld(world);
+    if (this.activeGatherOwner && this.config.taskQueue && !this.config.taskQueue.hasRunnableTask()) {
+      this.activeGatherOwner = undefined;
+    }
     const memorySnapshot = memory?.getSnapshot();
     this.log("tick.start", {
       tickId,
@@ -99,6 +128,21 @@ export class ChatAgent {
       }
       this.log("autonomy.result", { tickId, acted: autonomyActed });
       this.log("tick.end", { tickId, outcome: autonomyActed ? "autonomy_action" : "idle" });
+      return;
+    }
+
+    const directPlan = this.createDirectGatherPlan(nextChat, world, botNames, tickId);
+    if (directPlan) {
+      this.log("planner.result", {
+        tickId,
+        chat: compactChat(nextChat),
+        addressedToBot: directPlan.addressedToBot,
+        confidence: directPlan.confidence,
+        reason: directPlan.reason,
+        steps: directPlan.steps.map(compactStep),
+      });
+      await this.executePlan(directPlan, world, tickId);
+      this.log("tick.end", { tickId, outcome: "direct_gather_plan" });
       return;
     }
 
@@ -315,6 +359,131 @@ export class ChatAgent {
   private log(type: string, payload?: Record<string, unknown>): void {
     this.config.decisionLogger?.log(type, payload);
   }
+
+  private createDirectGatherPlan(
+    chat: ChatMessageSnapshot,
+    world: WorldSnapshot,
+    botNames: string[],
+    tickId: string,
+  ): AgentPlan | undefined {
+    const stopRequested = parseStopRequest(chat.message);
+    if (stopRequested && this.activeGatherOwner && samePlayer(chat.username, this.activeGatherOwner)) {
+      this.pendingGatherRequest = undefined;
+      this.activeGatherOwner = undefined;
+      return {
+        addressedToBot: true,
+        confidence: 1,
+        reason: "active gather owner requested stop",
+        steps: [
+          { type: "say", message: "好，我停下。" },
+          {
+            type: "action",
+            action: {
+              name: "stop",
+              args: {
+                reason: `Gather task stopped by '${chat.username}'`,
+              },
+            },
+          },
+        ],
+      };
+    }
+
+    const pending = this.pendingGatherRequest;
+    if (pending && Date.now() > pending.expiresAt) {
+      this.log("gather.pending.expired", { tickId, pending });
+      this.pendingGatherRequest = undefined;
+    } else if (pending && samePlayer(chat.username, pending.username)) {
+      const amount = parseRequestedCount(chat.message);
+      if (amount !== undefined) {
+        this.pendingGatherRequest = undefined;
+        this.activeGatherOwner = chat.username;
+        const currentCount = countWorldInventoryItems(world, pending.itemNames);
+        const targetCount = currentCount + amount;
+        return {
+          addressedToBot: true,
+          confidence: 1,
+          reason: "answered pending gather amount",
+          steps: [
+            { type: "say", message: `好，我去砍 ${amount} 个${pending.label}，够了就告诉你。` },
+            {
+              type: "task",
+              task: {
+                title: `Collect ${amount} ${pending.label}`,
+                source: "direct",
+                steps: [
+                  {
+                    type: "collect_until_inventory",
+                    blockName: pending.blockName,
+                    itemNames: pending.itemNames,
+                    targetCount,
+                    actionCount: pending.actionCount,
+                    maxDistance: pending.maxDistance,
+                    description: `Collect ${pending.label} until inventory reaches ${targetCount}`,
+                  },
+                  { type: "say", message: `砍完了，已经拿到 ${amount} 个${pending.label}。` },
+                ],
+              },
+            },
+          ],
+        };
+      }
+    }
+
+    const gatherRequest = parseVagueTreeGatherRequest(chat.message, botNames, this.config.commandPrefix);
+    if (!gatherRequest) {
+      return undefined;
+    }
+
+    const amount = parseRequestedCount(chat.message);
+    if (amount === undefined) {
+      this.pendingGatherRequest = {
+        actionCount: 4,
+        blockName: "log",
+        expiresAt: Date.now() + GATHER_REQUEST_TTL_MS,
+        itemNames: LOG_ITEM_NAMES,
+        label: "原木",
+        maxDistance: 96,
+        username: chat.username,
+      };
+      return {
+        addressedToBot: true,
+        confidence: 1,
+        reason: "tree gather requested without amount",
+        steps: [{ type: "say", message: "要砍多少个原木？" }],
+      };
+    }
+
+    this.activeGatherOwner = chat.username;
+    const currentCount = countWorldInventoryItems(world, LOG_ITEM_NAMES);
+    return {
+      addressedToBot: true,
+      confidence: 1,
+      reason: "tree gather requested with amount",
+      steps: [
+        { type: "say", message: `好，我去砍 ${amount} 个原木，够了就告诉你。` },
+        {
+          type: "task",
+          task: {
+            title: `Collect ${amount} logs`,
+            source: "direct",
+            steps: [
+              {
+                type: "collect_until_inventory",
+                blockName: "log",
+                itemNames: LOG_ITEM_NAMES,
+                targetCount: currentCount + amount,
+                actionCount: 4,
+                maxDistance: 96,
+                description: `Collect logs until inventory reaches ${currentCount + amount}`,
+              },
+              { type: "say", message: `砍完了，已经拿到 ${amount} 个原木。` },
+            ],
+          },
+        },
+      ],
+    };
+  }
 }
 
 function createBotNames(botId: string, botUsername: string, aliases: string[]): string[] {
@@ -449,4 +618,78 @@ function compactStep(step: AgentPlanStep): Record<string, unknown> {
     type: "action",
     action: step.action,
   };
+}
+
+function parseVagueTreeGatherRequest(message: string, botNames: string[], commandPrefix: string): boolean {
+  const normalized = normalizeMessage(message);
+  if (!isMessageAddressed(normalized, botNames, commandPrefix)) {
+    return false;
+  }
+
+  return (
+    normalized.includes("砍树") ||
+    normalized.includes("砍木头") ||
+    normalized.includes("伐木") ||
+    normalized.includes("chop tree") ||
+    normalized.includes("cut tree") ||
+    normalized.includes("collect wood") ||
+    normalized.includes("get wood")
+  );
+}
+
+function parseStopRequest(message: string): boolean {
+  const normalized = normalizeMessage(message);
+  return (
+    normalized === "停" ||
+    normalized === "停止" ||
+    normalized === "停下" ||
+    normalized === "stop" ||
+    normalized === "cancel" ||
+    normalized.includes(" 停止") ||
+    normalized.includes(" 停下") ||
+    normalized.includes(" stop") ||
+    normalized.includes(" cancel")
+  );
+}
+
+function parseRequestedCount(message: string): number | undefined {
+  const normalized = normalizeMessage(message);
+  const match = /(?:^|[^\d])(\d{1,3})(?:\s*(?:个|块|根|logs?|wood)?)?(?:$|[^\d])/iu.exec(normalized);
+  if (!match?.[1]) {
+    return undefined;
+  }
+
+  const value = Number.parseInt(match[1], 10);
+  return Number.isFinite(value) && value > 0 ? Math.min(value, 512) : undefined;
+}
+
+function isMessageAddressed(normalizedMessage: string, botNames: string[], commandPrefix: string): boolean {
+  const prefix = commandPrefix.trim().toLowerCase();
+  if (prefix && normalizedMessage.startsWith(prefix.toLowerCase())) {
+    return true;
+  }
+
+  return botNames.some((name) => {
+    const normalizedName = name.trim().toLowerCase();
+    return normalizedName.length > 0 && normalizedMessage.includes(normalizedName);
+  });
+}
+
+function countWorldInventoryItems(world: WorldSnapshot, itemNames: string[]): number {
+  const names = new Set(itemNames.map(normalizeItemName));
+  return world.self.inventory
+    .filter((item) => names.has(normalizeItemName(item.name)) || (item.displayName ? names.has(normalizeItemName(item.displayName)) : false))
+    .reduce((total, item) => total + item.count, 0);
+}
+
+function normalizeMessage(message: string): string {
+  return message.trim().toLowerCase().replace(/\s+/gu, " ");
+}
+
+function normalizeItemName(value: string): string {
+  return value.trim().toLowerCase().replace(/^minecraft:/u, "").replace(/\s+/gu, "_");
+}
+
+function samePlayer(left: string, right: string): boolean {
+  return left.localeCompare(right, undefined, { sensitivity: "accent" }) === 0;
 }

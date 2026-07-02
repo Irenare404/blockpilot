@@ -15,6 +15,15 @@ export type AgentTaskStep =
       type: "wait";
       durationMs: number;
       description?: string;
+    }
+  | {
+      type: "collect_until_inventory";
+      blockName: string;
+      itemNames: string[];
+      targetCount: number;
+      actionCount?: number;
+      maxDistance?: number;
+      description?: string;
     };
 
 export interface AgentTaskDefinition {
@@ -179,6 +188,60 @@ export class AgentTaskQueue {
         return true;
       }
 
+      if (step.type === "collect_until_inventory") {
+        const currentCount = countInventoryItems(world, step.itemNames);
+        if (currentCount >= step.targetCount) {
+          this.finishStep(task, step.description ?? `Collected ${currentCount}/${step.targetCount}`);
+          runner.log("task.step.result", {
+            task: cloneSnapshot(task),
+            step,
+            result: {
+              currentCount,
+              targetCount: step.targetCount,
+              completed: true,
+            },
+          });
+          return true;
+        }
+
+        if (!runner.canRunAction("dig_nearest_block")) {
+          this.failTask(task, "Action 'dig_nearest_block' is unavailable or not allowed");
+          runner.log("task.step.skipped", {
+            task: cloneSnapshot(task),
+            step,
+            reason: "action_unavailable_or_not_allowed",
+          });
+          return true;
+        }
+
+        const remaining = step.targetCount - currentCount;
+        const actionCount = Math.min(Math.max(1, Math.floor(step.actionCount ?? 4)), remaining, 16);
+        const result = await runner.runAction({
+          name: "dig_nearest_block",
+          args: {
+            blockName: step.blockName,
+            count: actionCount,
+            maxDistance: step.maxDistance ?? 64,
+            waitForDropMs: 900,
+            settleMs: 300,
+          },
+        });
+        task.waitUntil = Date.now() + 750;
+        task.updatedAt = nowIso();
+        task.lastMessage = `Collecting ${currentCount}/${step.targetCount}`;
+        runner.log("task.step.result", {
+          task: cloneSnapshot(task),
+          step,
+          result: {
+            actionResult: result,
+            currentCount,
+            targetCount: step.targetCount,
+            remaining,
+          },
+        });
+        return true;
+      }
+
       if (!runner.canRunAction(step.action.name)) {
         this.failTask(task, `Action '${step.action.name}' is unavailable or not allowed`);
         runner.log("task.step.skipped", {
@@ -270,6 +333,25 @@ function cloneTaskStep(step: AgentTaskStep): AgentTaskStep {
     return clone;
   }
 
+  if (step.type === "collect_until_inventory") {
+    const clone: AgentTaskStep = {
+      type: "collect_until_inventory",
+      blockName: step.blockName,
+      itemNames: [...step.itemNames],
+      targetCount: step.targetCount,
+    };
+    if (step.actionCount !== undefined) {
+      clone.actionCount = step.actionCount;
+    }
+    if (step.maxDistance !== undefined) {
+      clone.maxDistance = step.maxDistance;
+    }
+    if (step.description) {
+      clone.description = step.description;
+    }
+    return clone;
+  }
+
   const clone: AgentTaskStep = {
     type: "wait",
     durationMs: step.durationMs,
@@ -300,4 +382,15 @@ function cloneSnapshot(task: AgentTask): AgentTaskSnapshot {
   }
 
   return snapshot;
+}
+
+function countInventoryItems(world: WorldSnapshot, itemNames: string[]): number {
+  const names = new Set(itemNames.map(normalizeName));
+  return world.self.inventory
+    .filter((item) => names.has(normalizeName(item.name)) || (item.displayName ? names.has(normalizeName(item.displayName)) : false))
+    .reduce((total, item) => total + item.count, 0);
+}
+
+function normalizeName(value: string): string {
+  return value.trim().toLowerCase().replace(/^minecraft:/u, "").replace(/\s+/gu, "_");
 }
