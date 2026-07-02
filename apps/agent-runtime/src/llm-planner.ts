@@ -134,6 +134,7 @@ function createSystemPrompt(context: PlannerContext): string {
       "3. If addressed, inspect safety, currentTask, inventory, world facts, memory, capabilities, and only then choose steps.",
       "4. Prefer exact IDs/coordinates/slots from the snapshot over vague nearest-target actions.",
       "5. Keep replies short, natural, and in the player's language.",
+      "6. For greetings or small talk, reply briefly and do not volunteer world observations, danger analysis, spawner guesses, or automation/farm guesses.",
     ]),
     promptSection("Addressing Rules", [
       "Treat the message as addressed when it uses your username, bot id, alias, explicit prefix, or clearly replies to you in recent context.",
@@ -172,6 +173,7 @@ function createSystemPrompt(context: PlannerContext): string {
       "When explaining danger, only mention hostile mob names that appear in world.safety.threats or world.entities.mobs.",
       "Never replace one mob type with another.",
       "If asked why you did not run from a mob, answer from exact safety facts: severity, trapped, canReachBot, distance, and reason. If the mob is not visible, say you do not currently see it.",
+      "Only discuss spawners, mob farms, redstone farms, or automation when the player explicitly asks about nearby devices, danger, mobs, farms, or why you did/did not attack.",
       "Do not attack mobs marked trapped, canReachBot=false, or near spawners unless the player explicitly asks to clear that contained setup and allowTrapped=true is intentional.",
       "Do not treat every monster as an attack target; mobs in farms may be harmless.",
       "Do not attack players unless server rules allow it and the player command is unambiguous.",

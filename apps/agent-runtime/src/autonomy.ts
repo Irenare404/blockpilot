@@ -94,11 +94,6 @@ function chooseAutonomyMessage(world: WorldSnapshot, memory: AgentMemorySnapshot
 }
 
 function chooseCompanionMessage(world: WorldSnapshot, memory: AgentMemorySnapshot): string | undefined {
-  const spawner = world.blocks.nearbySpawners[0] ?? memory.places.find((place) => place.kind === "spawner");
-  if (spawner) {
-    return "\u6211\u770B\u5230\u9644\u8FD1\u50CF\u662F\u5237\u602A\u88C5\u7F6E\uFF0C\u6211\u5148\u5F53\u6210\u751F\u7535\u8BBE\u65BD\uFF0C\u4E0D\u4E71\u6253\u602A\u3002";
-  }
-
   const player = world.nearbyPlayers[0];
   if (player) {
     return `${player.username}\uFF0C\u9700\u8981\u6211\u8DDF\u968F\u3001\u67E5\u770B\u7BB1\u5B50\u6216\u6316\u9644\u8FD1\u65B9\u5757\u65F6\u53EB\u6211\u3002`;

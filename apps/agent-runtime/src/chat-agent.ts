@@ -191,6 +191,21 @@ export class ChatAgent {
       return;
     }
 
+    const smallTalkPlan = this.createDirectSmallTalkPlan(nextChat, botNames);
+    if (smallTalkPlan) {
+      this.log("planner.result", {
+        tickId,
+        chat: compactChat(nextChat),
+        addressedToBot: smallTalkPlan.addressedToBot,
+        confidence: smallTalkPlan.confidence,
+        reason: smallTalkPlan.reason,
+        steps: smallTalkPlan.steps.map(compactStep),
+      });
+      await this.executePlan(smallTalkPlan, world, tickId);
+      this.log("tick.end", { tickId, outcome: "direct_smalltalk_plan" });
+      return;
+    }
+
     const context: PlannerContext = {
       botId: this.config.botId,
       botUsername,
@@ -624,6 +639,24 @@ export class ChatAgent {
       ],
     };
   }
+
+  private createDirectSmallTalkPlan(chat: ChatMessageSnapshot, botNames: string[]): AgentPlan | undefined {
+    const normalized = normalizeMessage(chat.message);
+    if (!isMessageAddressed(normalized, botNames, this.config.commandPrefix)) {
+      return undefined;
+    }
+
+    if (!isGreetingMessage(normalized, botNames, this.config.commandPrefix)) {
+      return undefined;
+    }
+
+    return {
+      addressedToBot: true,
+      confidence: 1,
+      reason: "direct greeting",
+      steps: [{ type: "say", message: "\u4f60\u597d\uff0c\u6211\u5728\u3002" }],
+    };
+  }
 }
 
 function createBotNames(botId: string, botUsername: string, aliases: string[]): string[] {
@@ -766,6 +799,24 @@ function parseGatherSpec(message: string): GatherSpec | undefined {
   }
 
   return GATHER_SPECS.find((spec) => matchesGatherSpec(normalized, spec));
+}
+
+function isGreetingMessage(normalizedMessage: string, botNames: string[], commandPrefix: string): boolean {
+  let cleaned = normalizedMessage;
+  const prefix = commandPrefix.trim().toLowerCase();
+  if (prefix && cleaned.startsWith(prefix)) {
+    cleaned = cleaned.slice(prefix.length).trim();
+  }
+
+  for (const name of botNames) {
+    const normalizedName = name.trim().toLowerCase();
+    if (normalizedName) {
+      cleaned = cleaned.replaceAll(normalizedName, " ").trim();
+    }
+  }
+
+  cleaned = cleaned.replace(/[，。！？,.!?]/gu, "").trim();
+  return ["hi", "hello", "hey", "\u4f60\u597d", "\u55e8", "\u5728\u5417", "\u5728\u4e0d\u5728"].includes(cleaned);
 }
 
 function matchesGatherSpec(normalized: string, spec: GatherSpec): boolean {
