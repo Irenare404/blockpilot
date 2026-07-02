@@ -3,7 +3,7 @@ import type { AgentDecisionLogger } from "./decision-log.js";
 import type { GatewayClient } from "./gateway-client.js";
 import type { AgentMemorySnapshot, MemoryStore } from "./memory-store.js";
 import type { AgentPlan, AgentPlanStep, AgentPlanner, PlannerContext } from "./planner.js";
-import type { AgentTaskQueue } from "./task-queue.js";
+import type { AgentTaskQueue, AgentTaskStep } from "./task-queue.js";
 
 export interface SafetyHandler {
   handle(world: WorldSnapshot): Promise<boolean>;
@@ -26,28 +26,71 @@ export interface ChatAgentConfig {
   taskQueue?: AgentTaskQueue;
 }
 
-interface PendingGatherRequest {
+interface GatherSpec {
   actionCount: number;
   blockName: string;
-  expiresAt: number;
   itemNames: string[];
   label: string;
   maxDistance: number;
-  username: string;
 }
 
-const GATHER_REQUEST_TTL_MS = 120_000;
-const LOG_ITEM_NAMES = [
-  "log",
-  "oak_log",
-  "spruce_log",
-  "birch_log",
-  "jungle_log",
-  "acacia_log",
-  "dark_oak_log",
-  "mangrove_log",
-  "cherry_log",
-  "pale_oak_log",
+interface BuildSpec {
+  materialItemName?: string;
+  preset?: "starter_hut" | "platform" | "pillar";
+}
+
+type PendingGoalRequest =
+  | {
+      type: "gather";
+      expiresAt: number;
+      spec: GatherSpec;
+      username: string;
+    }
+  | {
+      type: "build";
+      expiresAt: number;
+      spec: BuildSpec;
+      username: string;
+    };
+
+const GOAL_REQUEST_TTL_MS = 120_000;
+
+const GATHER_SPECS: GatherSpec[] = [
+  {
+    actionCount: 4,
+    blockName: "log",
+    itemNames: ["log", "oak_log", "spruce_log", "birch_log", "jungle_log", "acacia_log", "dark_oak_log", "mangrove_log", "cherry_log", "pale_oak_log"],
+    label: "\u539f\u6728",
+    maxDistance: 96,
+  },
+  {
+    actionCount: 8,
+    blockName: "dirt,grass,grass_block",
+    itemNames: ["dirt", "grass", "grass_block", "coarse_dirt", "rooted_dirt", "podzol"],
+    label: "\u6ce5\u571f",
+    maxDistance: 64,
+  },
+  {
+    actionCount: 6,
+    blockName: "stone,cobblestone,deepslate",
+    itemNames: ["stone", "cobblestone", "deepslate", "cobbled_deepslate"],
+    label: "\u77f3\u5934",
+    maxDistance: 64,
+  },
+  {
+    actionCount: 8,
+    blockName: "sand",
+    itemNames: ["sand", "red_sand"],
+    label: "\u6c99\u5b50",
+    maxDistance: 64,
+  },
+  {
+    actionCount: 8,
+    blockName: "snow,snow_block",
+    itemNames: ["snowball", "snow", "snow_block"],
+    label: "\u96ea",
+    maxDistance: 64,
+  },
 ];
 
 export class ChatAgent {
@@ -56,8 +99,8 @@ export class ChatAgent {
   private readonly config: ChatAgentConfig;
   private readonly handledChatKeys: string[] = [];
   private readonly handledChatSet = new Set<string>();
-  private pendingGatherRequest: PendingGatherRequest | undefined;
-  private activeGatherOwner: string | undefined;
+  private pendingGoalRequest: PendingGoalRequest | undefined;
+  private activeGoalOwner: string | undefined;
   private readonly recentReplies: Array<{ key: string; sentAt: number }> = [];
 
   constructor(client: GatewayClient, planner: AgentPlanner, config: ChatAgentConfig) {
@@ -74,8 +117,8 @@ export class ChatAgent {
     const memory = this.config.memory;
 
     await memory?.observeWorld(world);
-    if (this.activeGatherOwner && this.config.taskQueue && !this.config.taskQueue.hasRunnableTask()) {
-      this.activeGatherOwner = undefined;
+    if (this.activeGoalOwner && this.config.taskQueue && !this.config.taskQueue.hasRunnableTask()) {
+      this.activeGoalOwner = undefined;
     }
     const memorySnapshot = memory?.getSnapshot();
     this.log("tick.start", {
@@ -131,7 +174,7 @@ export class ChatAgent {
       return;
     }
 
-    const directPlan = this.createDirectGatherPlan(nextChat, world, botNames, tickId);
+    const directPlan = this.createDirectGoalPlan(nextChat, world, botNames, tickId);
     if (directPlan) {
       this.log("planner.result", {
         tickId,
@@ -142,7 +185,7 @@ export class ChatAgent {
         steps: directPlan.steps.map(compactStep),
       });
       await this.executePlan(directPlan, world, tickId);
-      this.log("tick.end", { tickId, outcome: "direct_gather_plan" });
+      this.log("tick.end", { tickId, outcome: "direct_goal_plan" });
       return;
     }
 
@@ -360,28 +403,28 @@ export class ChatAgent {
     this.config.decisionLogger?.log(type, payload);
   }
 
-  private createDirectGatherPlan(
+  private createDirectGoalPlan(
     chat: ChatMessageSnapshot,
     world: WorldSnapshot,
     botNames: string[],
     tickId: string,
   ): AgentPlan | undefined {
     const stopRequested = parseStopRequest(chat.message);
-    if (stopRequested && this.activeGatherOwner && samePlayer(chat.username, this.activeGatherOwner)) {
-      this.pendingGatherRequest = undefined;
-      this.activeGatherOwner = undefined;
+    if (stopRequested && this.activeGoalOwner && samePlayer(chat.username, this.activeGoalOwner)) {
+      this.pendingGoalRequest = undefined;
+      this.activeGoalOwner = undefined;
       return {
         addressedToBot: true,
         confidence: 1,
-        reason: "active gather owner requested stop",
+        reason: "active goal owner requested stop",
         steps: [
-          { type: "say", message: "好，我停下。" },
+          { type: "say", message: "\u597d\uff0c\u6211\u505c\u4e0b\u3002" },
           {
             type: "action",
             action: {
               name: "stop",
               args: {
-                reason: `Gather task stopped by '${chat.username}'`,
+                reason: `Goal task stopped by ${chat.username}`,
               },
             },
           },
@@ -389,95 +432,169 @@ export class ChatAgent {
       };
     }
 
-    const pending = this.pendingGatherRequest;
+    const pending = this.pendingGoalRequest;
     if (pending && Date.now() > pending.expiresAt) {
-      this.log("gather.pending.expired", { tickId, pending });
-      this.pendingGatherRequest = undefined;
+      this.log("goal.pending.expired", { tickId, pending });
+      this.pendingGoalRequest = undefined;
     } else if (pending && samePlayer(chat.username, pending.username)) {
-      const amount = parseRequestedCount(chat.message);
-      if (amount !== undefined) {
-        this.pendingGatherRequest = undefined;
-        this.activeGatherOwner = chat.username;
-        const currentCount = countWorldInventoryItems(world, pending.itemNames);
-        const targetCount = currentCount + amount;
-        return {
-          addressedToBot: true,
-          confidence: 1,
-          reason: "answered pending gather amount",
-          steps: [
-            { type: "say", message: `好，我去砍 ${amount} 个${pending.label}，够了就告诉你。` },
-            {
-              type: "task",
-              task: {
-                title: `Collect ${amount} ${pending.label}`,
-                source: "direct",
-                steps: [
-                  {
-                    type: "collect_until_inventory",
-                    blockName: pending.blockName,
-                    itemNames: pending.itemNames,
-                    targetCount,
-                    actionCount: pending.actionCount,
-                    maxDistance: pending.maxDistance,
-                    description: `Collect ${pending.label} until inventory reaches ${targetCount}`,
-                  },
-                  { type: "say", message: `砍完了，已经拿到 ${amount} 个${pending.label}。` },
-                ],
-              },
-            },
-          ],
-        };
+      const pendingPlan = this.createPendingGoalAnswerPlan(pending, chat, world);
+      if (pendingPlan) {
+        return pendingPlan;
       }
     }
 
-    const gatherRequest = parseVagueTreeGatherRequest(chat.message, botNames, this.config.commandPrefix);
-    if (!gatherRequest) {
+    const addressed = isMessageAddressed(normalizeMessage(chat.message), botNames, this.config.commandPrefix);
+    if (!addressed) {
       return undefined;
     }
 
-    const amount = parseRequestedCount(chat.message);
-    if (amount === undefined) {
-      this.pendingGatherRequest = {
-        actionCount: 4,
-        blockName: "log",
-        expiresAt: Date.now() + GATHER_REQUEST_TTL_MS,
-        itemNames: LOG_ITEM_NAMES,
-        label: "原木",
-        maxDistance: 96,
-        username: chat.username,
-      };
-      return {
-        addressedToBot: true,
-        confidence: 1,
-        reason: "tree gather requested without amount",
-        steps: [{ type: "say", message: "要砍多少个原木？" }],
-      };
+    const gatherSpec = parseGatherSpec(chat.message);
+    if (gatherSpec) {
+      const amount = parseRequestedCount(chat.message);
+      if (amount === undefined) {
+        this.pendingGoalRequest = {
+          type: "gather",
+          expiresAt: Date.now() + GOAL_REQUEST_TTL_MS,
+          spec: gatherSpec,
+          username: chat.username,
+        };
+        return {
+          addressedToBot: true,
+          confidence: 1,
+          reason: "gather requested without amount",
+          steps: [{ type: "say", message: `\u8981\u6536\u96c6\u591a\u5c11\u4e2a${gatherSpec.label}\uff1f` }],
+        };
+      }
+
+      return this.createGatherTaskPlan(chat.username, gatherSpec, amount, world);
     }
 
-    this.activeGatherOwner = chat.username;
-    const currentCount = countWorldInventoryItems(world, LOG_ITEM_NAMES);
+    const buildSpec = parseBuildSpec(chat.message);
+    if (buildSpec) {
+      if (!buildSpec.preset) {
+        this.pendingGoalRequest = {
+          type: "build",
+          expiresAt: Date.now() + GOAL_REQUEST_TTL_MS,
+          spec: buildSpec,
+          username: chat.username,
+        };
+        return {
+          addressedToBot: true,
+          confidence: 1,
+          reason: "build requested without preset",
+          steps: [{ type: "say", message: "\u8981\u76d6\u54ea\u79cd\uff1f\u53ef\u4ee5\u8bf4\u5c0f\u5c4b\u3001\u5e73\u53f0\u6216\u67f1\u5b50\u3002" }],
+        };
+      }
+
+      if (!buildSpec.materialItemName) {
+        this.pendingGoalRequest = {
+          type: "build",
+          expiresAt: Date.now() + GOAL_REQUEST_TTL_MS,
+          spec: buildSpec,
+          username: chat.username,
+        };
+        return {
+          addressedToBot: true,
+          confidence: 1,
+          reason: "build requested without material",
+          steps: [{ type: "say", message: "\u7528\u4ec0\u4e48\u6750\u6599\u76d6\uff1f\u6bd4\u5982\u6728\u677f\u3001\u6ce5\u571f\u6216\u77f3\u5934\u3002" }],
+        };
+      }
+
+      return this.createBuildTaskPlan(chat.username, buildSpec.preset, buildSpec.materialItemName, world);
+    }
+
+    return undefined;
+  }
+
+  private createPendingGoalAnswerPlan(pending: PendingGoalRequest, chat: ChatMessageSnapshot, world: WorldSnapshot): AgentPlan | undefined {
+    if (pending.type === "gather") {
+      const amount = parseRequestedCount(chat.message);
+      if (amount === undefined) {
+        return undefined;
+      }
+
+      this.pendingGoalRequest = undefined;
+      return this.createGatherTaskPlan(chat.username, pending.spec, amount, world);
+    }
+
+    const preset = pending.spec.preset ?? parseBuildPreset(chat.message);
+    const materialItemName = pending.spec.materialItemName ?? parseBuildMaterial(chat.message);
+    if (!preset || !materialItemName) {
+      return undefined;
+    }
+
+    this.pendingGoalRequest = undefined;
+    return this.createBuildTaskPlan(chat.username, preset, materialItemName, world);
+  }
+
+  private createGatherTaskPlan(username: string, spec: GatherSpec, amount: number, world: WorldSnapshot): AgentPlan {
+    this.activeGoalOwner = username;
+    const currentCount = countWorldInventoryItems(world, spec.itemNames);
+    const targetCount = currentCount + amount;
     return {
       addressedToBot: true,
       confidence: 1,
-      reason: "tree gather requested with amount",
+      reason: "gather goal ready",
       steps: [
-        { type: "say", message: `好，我去砍 ${amount} 个原木，够了就告诉你。` },
+        { type: "say", message: `\u597d\uff0c\u6211\u53bb\u6536\u96c6 ${amount} \u4e2a${spec.label}\uff0c\u591f\u4e86\u5c31\u544a\u8bc9\u4f60\u3002` },
         {
           type: "task",
           task: {
-            title: `Collect ${amount} logs`,
+            title: `Collect ${amount} ${spec.label}`,
             source: "direct",
             steps: [
               {
                 type: "collect_until_inventory",
-                blockName: "log",
-                itemNames: LOG_ITEM_NAMES,
-                targetCount: currentCount + amount,
-                actionCount: 4,
-                maxDistance: 96,
-                description: `Collect logs until inventory reaches ${currentCount + amount}`,
+                blockName: spec.blockName,
+                itemNames: spec.itemNames,
+                targetCount,
+                actionCount: spec.actionCount,
+                maxDistance: spec.maxDistance,
+                description: `Collect ${spec.label} until inventory reaches ${targetCount}`,
               },
-              { type: "say", message: `砍完了，已经拿到 ${amount} 个原木。` },
+              { type: "say", message: `\u5b8c\u6210\u4e86\uff0c\u5df2\u7ecf\u6536\u96c6\u5230 ${amount} \u4e2a${spec.label}\u3002` },
+            ],
+          },
+        },
+      ],
+    };
+  }
+
+  private createBuildTaskPlan(
+    username: string,
+    preset: "starter_hut" | "platform" | "pillar",
+    materialItemName: string,
+    world: WorldSnapshot,
+  ): AgentPlan {
+    this.activeGoalOwner = username;
+    const requiredCount = getBuildPresetRequiredCount(preset);
+    const preparationSteps = createMaterialPreparationSteps(materialItemName, requiredCount, world);
+    return {
+      addressedToBot: true,
+      confidence: 1,
+      reason: "build goal ready",
+      steps: [
+        { type: "say", message: `\u597d\uff0c\u6211\u7528${formatMaterialLabel(materialItemName)}\u76d6${formatPresetLabel(preset)}\u3002` },
+        {
+          type: "task",
+          task: {
+            title: `Build ${preset}`,
+            source: "direct",
+            steps: [
+              ...preparationSteps,
+              {
+                type: "action",
+                action: {
+                  name: "build_preset",
+                  args: {
+                    preset,
+                    materialItemName,
+                  },
+                },
+                description: `Build ${preset} with ${materialItemName}`,
+              },
+              { type: "say", message: "\u76d6\u597d\u4e86\u3002" },
             ],
           },
         },
@@ -554,16 +671,15 @@ function compactWorld(world: WorldSnapshot): Record<string, unknown> {
 function createActionFailureReply(actionName: string, errorMessage: string): string {
   const cleaned = cleanActionErrorMessage(errorMessage);
   if (actionName === "dig_nearest_block" && cleaned.startsWith("No diggable block found")) {
-    return `我附近没找到可挖的目标：${cleaned}`;
+    return `\u6211\u9644\u8fd1\u6ca1\u627e\u5230\u53ef\u6316\u7684\u76ee\u6807\uff1a${cleaned}`;
   }
 
   if (actionName === "attack_nearest_entity" && cleaned.startsWith("No attack target found")) {
-    return `我附近没找到能打的目标：${cleaned}`;
+    return `\u6211\u9644\u8fd1\u6ca1\u627e\u5230\u80fd\u6253\u7684\u76ee\u6807\uff1a${cleaned}`;
   }
 
-  return `这步没成：${cleaned}`;
+  return `\u8fd9\u6b65\u6ca1\u6210\uff1a${cleaned}`;
 }
-
 function cleanActionErrorMessage(errorMessage: string): string {
   const workerErrorMatch = /"error"\s*:\s*"([^"]+)"/u.exec(errorMessage);
   const raw = workerErrorMatch?.[1] ?? errorMessage;
@@ -620,41 +736,193 @@ function compactStep(step: AgentPlanStep): Record<string, unknown> {
   };
 }
 
-function parseVagueTreeGatherRequest(message: string, botNames: string[], commandPrefix: string): boolean {
+function parseGatherSpec(message: string): GatherSpec | undefined {
   const normalized = normalizeMessage(message);
-  if (!isMessageAddressed(normalized, botNames, commandPrefix)) {
-    return false;
+  if (!containsAny(normalized, ["dig", "mine", "collect", "get", "chop", "cut", "\u6316", "\u91c7\u96c6", "\u6536\u96c6", "\u62ff", "\u83b7\u53d6", "\u780d", "\u4f10"])) {
+    return undefined;
   }
 
-  return (
-    normalized.includes("砍树") ||
-    normalized.includes("砍木头") ||
-    normalized.includes("伐木") ||
-    normalized.includes("chop tree") ||
-    normalized.includes("cut tree") ||
-    normalized.includes("collect wood") ||
-    normalized.includes("get wood")
-  );
+  return GATHER_SPECS.find((spec) => matchesGatherSpec(normalized, spec));
+}
+
+function matchesGatherSpec(normalized: string, spec: GatherSpec): boolean {
+  if (spec.blockName.includes("log")) {
+    return containsAny(normalized, ["tree", "wood", "log", "\u6811", "\u6728\u5934", "\u539f\u6728", "\u780d\u6811", "\u4f10\u6728"]);
+  }
+  if (spec.blockName.includes("dirt")) {
+    return containsAny(normalized, ["dirt", "grass", "\u6ce5\u571f", "\u571f", "\u8349\u65b9\u5757"]);
+  }
+  if (spec.blockName.includes("stone")) {
+    return containsAny(normalized, ["stone", "cobble", "deepslate", "\u77f3\u5934", "\u5706\u77f3", "\u6df1\u677f\u5ca9"]);
+  }
+  if (spec.blockName.includes("sand")) {
+    return containsAny(normalized, ["sand", "\u6c99", "\u6c99\u5b50"]);
+  }
+  if (spec.blockName.includes("snow")) {
+    return containsAny(normalized, ["snow", "\u96ea", "\u96ea\u5757"]);
+  }
+
+  return false;
+}
+
+function parseBuildSpec(message: string): BuildSpec | undefined {
+  const normalized = normalizeMessage(message);
+  if (!containsAny(normalized, ["build", "construct", "make", "\u76d6", "\u5efa", "\u5efa\u9020", "\u642d"])) {
+    return undefined;
+  }
+
+  const spec: BuildSpec = {};
+  const preset = parseBuildPreset(message);
+  const materialItemName = parseBuildMaterial(message);
+  if (preset) {
+    spec.preset = preset;
+  }
+  if (materialItemName) {
+    spec.materialItemName = materialItemName;
+  }
+  return spec;
+}
+
+function createMaterialPreparationSteps(materialItemName: string, requiredCount: number, world: WorldSnapshot): AgentTaskStep[] {
+  const currentCount = countWorldInventoryItems(world, [materialItemName]);
+  if (currentCount >= requiredCount) {
+    return [];
+  }
+
+  const missingCount = requiredCount - currentCount;
+  if (materialItemName === "oak_planks") {
+    const craftCount = Math.ceil(missingCount / 4);
+    return [
+      {
+        type: "collect_until_inventory",
+        blockName: "log",
+        itemNames: GATHER_SPECS[0]?.itemNames ?? ["log"],
+        targetCount: countWorldInventoryItems(world, GATHER_SPECS[0]?.itemNames ?? ["log"]) + craftCount,
+        actionCount: 4,
+        maxDistance: 96,
+        description: `Collect logs for ${requiredCount} planks`,
+      },
+      {
+        type: "action",
+        action: {
+          name: "craft_item",
+          args: {
+            itemName: "oak_planks",
+            count: craftCount,
+          },
+        },
+        description: `Craft ${craftCount} batches of planks`,
+      },
+    ];
+  }
+
+  const gatherSpec = getGatherSpecForMaterial(materialItemName);
+  if (!gatherSpec) {
+    return [];
+  }
+
+  return [
+    {
+      type: "collect_until_inventory",
+      blockName: gatherSpec.blockName,
+      itemNames: gatherSpec.itemNames,
+      targetCount: requiredCount,
+      actionCount: gatherSpec.actionCount,
+      maxDistance: gatherSpec.maxDistance,
+      description: `Collect ${requiredCount} ${materialItemName} for build`,
+    },
+  ];
+}
+
+function getGatherSpecForMaterial(materialItemName: string): GatherSpec | undefined {
+  switch (materialItemName) {
+    case "dirt":
+      return GATHER_SPECS.find((spec) => spec.blockName.includes("dirt"));
+    case "cobblestone":
+      return GATHER_SPECS.find((spec) => spec.blockName.includes("stone"));
+    case "sand":
+      return GATHER_SPECS.find((spec) => spec.blockName.includes("sand"));
+    default:
+      return undefined;
+  }
+}
+
+function getBuildPresetRequiredCount(preset: "starter_hut" | "platform" | "pillar"): number {
+  switch (preset) {
+    case "platform":
+      return 25;
+    case "pillar":
+      return 4;
+    case "starter_hut":
+      return 96;
+  }
+}
+
+function parseBuildPreset(message: string): "starter_hut" | "platform" | "pillar" | undefined {
+  const normalized = normalizeMessage(message);
+  if (containsAny(normalized, ["house", "hut", "home", "\u623f\u5b50", "\u5c0f\u5c4b", "\u6728\u5c4b"])) {
+    return "starter_hut";
+  }
+  if (containsAny(normalized, ["platform", "floor", "\u5e73\u53f0", "\u5730\u677f"])) {
+    return "platform";
+  }
+  if (containsAny(normalized, ["pillar", "tower", "\u67f1", "\u67f1\u5b50", "\u5854"])) {
+    return "pillar";
+  }
+  return undefined;
+}
+
+function parseBuildMaterial(message: string): string | undefined {
+  const normalized = normalizeMessage(message);
+  if (containsAny(normalized, ["oak_planks", "planks", "wood plank", "\u6728\u677f"])) {
+    return "oak_planks";
+  }
+  if (containsAny(normalized, ["dirt", "\u6ce5\u571f", "\u571f"])) {
+    return "dirt";
+  }
+  if (containsAny(normalized, ["cobblestone", "stone", "\u5706\u77f3", "\u77f3\u5934"])) {
+    return "cobblestone";
+  }
+  if (containsAny(normalized, ["sand", "\u6c99", "\u6c99\u5b50"])) {
+    return "sand";
+  }
+  return undefined;
+}
+
+function formatPresetLabel(preset: "starter_hut" | "platform" | "pillar"): string {
+  switch (preset) {
+    case "starter_hut":
+      return "\u5c0f\u5c4b";
+    case "platform":
+      return "\u5e73\u53f0";
+    case "pillar":
+      return "\u67f1\u5b50";
+  }
+}
+
+function formatMaterialLabel(materialItemName: string): string {
+  switch (materialItemName) {
+    case "oak_planks":
+      return "\u6728\u677f";
+    case "dirt":
+      return "\u6ce5\u571f";
+    case "cobblestone":
+      return "\u5706\u77f3";
+    case "sand":
+      return "\u6c99\u5b50";
+    default:
+      return materialItemName;
+  }
 }
 
 function parseStopRequest(message: string): boolean {
   const normalized = normalizeMessage(message);
-  return (
-    normalized === "停" ||
-    normalized === "停止" ||
-    normalized === "停下" ||
-    normalized === "stop" ||
-    normalized === "cancel" ||
-    normalized.includes(" 停止") ||
-    normalized.includes(" 停下") ||
-    normalized.includes(" stop") ||
-    normalized.includes(" cancel")
-  );
+  return containsAny(normalized, ["stop", "cancel", "\u505c", "\u505c\u6b62", "\u505c\u4e0b", "\u522b\u5f04\u4e86"]);
 }
 
 function parseRequestedCount(message: string): number | undefined {
   const normalized = normalizeMessage(message);
-  const match = /(?:^|[^\d])(\d{1,3})(?:\s*(?:个|块|根|logs?|wood)?)?(?:$|[^\d])/iu.exec(normalized);
+  const match = /(?:^|[^\d])(\d{1,3})(?:\s*(?:\u4e2a|\u5757|\u6839|logs?|wood|blocks?)?)?(?:$|[^\d])/iu.exec(normalized);
   if (!match?.[1]) {
     return undefined;
   }
@@ -680,6 +948,10 @@ function countWorldInventoryItems(world: WorldSnapshot, itemNames: string[]): nu
   return world.self.inventory
     .filter((item) => names.has(normalizeItemName(item.name)) || (item.displayName ? names.has(normalizeItemName(item.displayName)) : false))
     .reduce((total, item) => total + item.count, 0);
+}
+
+function containsAny(value: string, needles: string[]): boolean {
+  return needles.some((needle) => value.includes(needle));
 }
 
 function normalizeMessage(message: string): string {

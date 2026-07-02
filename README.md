@@ -94,7 +94,7 @@ Rule planner test commands in Minecraft chat:
 
 Use the LLM planner when you want natural language like `BlockPilot come here please` or Chinese phrases such as &#x4F60;&#x8FC7;&#x6765;&#x4E00;&#x4E0B; instead of mechanical command words.
 
-Conversational gathering is supported for tree chopping. Say `BlockPilot 砍树`; the agent asks how many logs to collect. Reply with a number such as `20`, and it queues a repeat-until-inventory task that keeps finding and chopping logs until the requested amount is collected or you say `停止`.
+Conversational goals are supported for common gathering and building flows. For example, say `BlockPilot 挖土` or `BlockPilot 砍树`; if the amount is missing, the agent asks how many to collect, then queues a repeat-until-inventory task. Say `BlockPilot 盖房子`; if the style or material is missing, it asks for the missing detail, prepares materials when it knows how, then builds. Say `停止` to cancel the active goal.
 
 ## Bot Worker Perception
 
