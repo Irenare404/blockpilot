@@ -407,12 +407,7 @@ export const coreActionsPlugin: WorkerPlugin = {
           }
 
           const timeoutMs = getDigConfirmationTimeoutMs(bot, block, confirmTimeoutMs);
-          const usedScaffold = await collectBlockWithPlugin(bot, block);
-          if (!usedScaffold) {
-            await equipBestToolForBlock(bot, block);
-            await bot.dig(block, true);
-          }
-          const confirmed = await waitForBlockToChange(bot, block, timeoutMs);
+          const confirmed = await digAndConfirmBlock(bot, block, timeoutMs);
           if (!confirmed) {
             const position = toPositionData(block.position);
             throw new Error(
@@ -2203,14 +2198,42 @@ async function eatWithAutoEatPlugin(bot: Bot, foodName: string): Promise<boolean
   return true;
 }
 
+async function digAndConfirmBlock(bot: Bot, block: MineflayerBlock, timeoutMs: number): Promise<boolean> {
+  let usedScaffold = false;
+  try {
+    usedScaffold = await collectBlockWithPlugin(bot, block);
+  } catch {
+    usedScaffold = false;
+  }
+  if (!usedScaffold) {
+    await equipBestToolForBlock(bot, block);
+    await bot.dig(block, true);
+  }
+  let confirmed = await waitForBlockToChange(bot, block, usedScaffold ? Math.min(timeoutMs, 5_000) : timeoutMs);
+  if (confirmed) {
+    return true;
+  }
+
+  const current = bot.blockAt(block.position);
+  if (!current || current.name !== block.name || !bot.canDigBlock(current)) {
+    return waitForBlockToChange(bot, block, timeoutMs);
+  }
+
+  await equipBestToolForBlock(bot, current);
+  await bot.dig(current, true);
+  confirmed = await waitForBlockToChange(bot, block, timeoutMs);
+  return confirmed;
+}
+
 function getDigConfirmationTimeoutMs(bot: Bot, block: MineflayerBlock, overrideMs: number | undefined): number {
+  const minimumMs = isLogBlockName(block.name) ? 12_000 : 3_000;
   if (typeof overrideMs === "number" && Number.isFinite(overrideMs)) {
-    return Math.floor(clamp(overrideMs, 500, 30_000));
+    return Math.floor(clamp(Math.max(overrideMs, minimumMs), 500, 30_000));
   }
 
   const digTimeMs = getBlockDigTimeMs(bot, block);
   const fallbackMs = isLogBlockName(block.name) ? 8_000 : 4_000;
-  return Math.floor(clamp((digTimeMs ?? fallbackMs) + 2_500, 3_000, 30_000));
+  return Math.floor(clamp(Math.max((digTimeMs ?? fallbackMs) + 2_500, minimumMs), minimumMs, 30_000));
 }
 
 function getBlockDigTimeMs(bot: Bot, block: MineflayerBlock): number | undefined {
